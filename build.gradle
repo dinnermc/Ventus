@@ -94,6 +94,12 @@ neoForge {
             // You can set various levels here.
             // Please read: https://stackoverflow.com/questions/2031163/when-to-use-the-different-log-levels
             logLevel = org.slf4j.event.Level.DEBUG
+
+            // Wind test overrides without recompiling (see WindField), e.g.
+            //   .\gradlew runClient -Pventus.wind=15,0,0
+            //   .\gradlew runClient -Pventus.disableWind=true
+            systemProperty 'ventus.wind', (findProperty('ventus.wind') ?: '5,0,0').toString()
+            systemProperty 'ventus.disableWind', (findProperty('ventus.disableWind') ?: 'false').toString()
         }
     }
 
