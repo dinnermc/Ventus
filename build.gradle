@@ -100,6 +100,10 @@ neoForge {
             //   .\gradlew runClient -Pventus.disableWind=true
             systemProperty 'ventus.wind', (findProperty('ventus.wind') ?: '5,0,0').toString()
             systemProperty 'ventus.disableWind', (findProperty('ventus.disableWind') ?: 'false').toString()
+
+            // Dump Mixin-transformed classes to run/.mixin.out for inspection, e.g.
+            //   .\gradlew runServer -Pventus.exportMixin=true
+            systemProperty 'mixin.debug.export', (findProperty('ventus.exportMixin') ?: 'false').toString()
         }
     }
 
