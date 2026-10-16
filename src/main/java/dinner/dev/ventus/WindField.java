@@ -1,10 +1,8 @@
 package dinner.dev.ventus;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
-import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
 import org.joml.Vector3d;
@@ -18,21 +16,21 @@ import org.joml.Vector3dc;
  * <p>
  * The field is the product of four factors:
  * <ol>
- *     <li>a per-dimension <b>base wind</b> (magnitude + direction), see {@link #baseWind};</li>
- *     <li>a <b>height profile</b> (see {@link #fadeAt}): the wind ramps from {@link #SURFACE_CALM} at
- *     the terrain surface up to full at {@link #FADE_HEIGHT} blocks above it. The reference surface
- *     is vanilla's {@link Heightmap.Types#OCEAN_FLOOR} (solid blocks, <b>water ignored, leaves
- *     counted as terrain</b>): a boat floating on the sea sits <em>above</em> its reference and
- *     still catches the wind, while a plane parked on the ground feels almost nothing;</li>
+ *     <li>a per-dimension <b>base wind</b> (magnitude + direction) from {@link VentusConfig};</li>
+ *     <li>a <b>height profile</b> (see {@link #fadeAt}): the wind ramps from
+ *     {@link VentusConfig#surfaceCalm()} at the terrain surface up to full at
+ *     {@link VentusConfig#fadeHeight()} blocks above it. The reference surface is vanilla's
+ *     {@link Heightmap.Types#OCEAN_FLOOR} (solid blocks, <b>water and leaves ignored edge cases
+ *     aside</b>): a boat floating on the sea sits <em>above</em> its reference and still catches the
+ *     wind, while a plane parked on the ground feels almost nothing. Leaves count as solid terrain,
+ *     so a plane skimming a forest sees the canopy as ground (trees shelter the wind);</li>
  *     <li>a <b>temporal fade-in</b> (see {@link #entryRamp}): the wind ramps from 0 to full over
  *     {@link #ENTRY_RAMP_SECONDS} seconds after a sub-level's first sample, so nothing jolts when a
  *     world loads or a sub-level enters a windy region;</li>
- *     <li>the global {@link #WIND_SCALE} multiplier.</li>
+ *     <li>the global {@link VentusConfig#windScale()} multiplier.</li>
  * </ol>
  * A submerged sample point (the centre block holds a fluid) yields zero wind, so a diving
  * sub-level feels nothing.
- * <p>
- * These constants are the stage-1 tunables; a config file will expose them.
  * <p>
  * Stages 2 and 3 add a pressure field, gusts, and rain/thunder, all on top of this base.
  * <p>
@@ -44,15 +42,6 @@ import org.joml.Vector3dc;
 public final class WindField {
     private WindField() {
     }
-
-    /** Altitude above the terrain (blocks) at which the wind reaches full strength. */
-    private static final double FADE_HEIGHT = 32.0;
-
-    /** Fraction of the wind that still blows at the terrain surface. */
-    private static final double SURFACE_CALM = 0.1;
-
-    /** Global multiplier applied to the sampled field. */
-    private static final double WIND_SCALE = 1.0;
 
     /** Seconds a sub-level takes to ram from no wind to full wind after its first sample. */
     private static final double ENTRY_RAMP_SECONDS = 5.0;
@@ -91,18 +80,6 @@ public final class WindField {
     }
 
     /**
-     * Writes the per-dimension base wind (magnitude in blocks/s, direction in the XZ plane).
-     * Default: Overworld 3 blocks/s toward +X (east); Nether and End calm.
-     */
-    private static void baseWind(final ResourceKey<Level> dimension, final Vector3d dest) {
-        if (Level.OVERWORLD.equals(dimension)) {
-            dest.set(3.0, 0.0, 0.0);
-        } else {
-            dest.set(0.0, 0.0, 0.0);
-        }
-    }
-
-    /**
      * Samples the wind for one sub-level, writing it into the carrier's {@link WindCarrier#ventus$wind()}
      * and updating the carrier's cached fade and first-sample time.
      *
@@ -125,7 +102,7 @@ public final class WindField {
             return;
         }
 
-        baseWind(level.dimension(), dest);
+        VentusConfig.baseWind(level.dimension(), dest);
         if (dest.lengthSquared() == 0.0) {
             carrier.ventus$setFade(0.0);
             return;
@@ -133,7 +110,7 @@ public final class WindField {
 
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
-        dest.mul(fade * entryRamp(level, carrier) * WIND_SCALE);
+        dest.mul(fade * entryRamp(level, carrier) * VentusConfig.windScale());
     }
 
     /**
@@ -150,17 +127,18 @@ public final class WindField {
             return dest.set(FIXED_OVERRIDE);
         }
 
-        baseWind(level.dimension(), dest);
+        VentusConfig.baseWind(level.dimension(), dest);
         if (dest.lengthSquared() == 0.0) {
             return dest;
         }
 
-        return dest.mul(fadeAt(level, worldPos, 1.0) * WIND_SCALE);
+        return dest.mul(fadeAt(level, worldPos, 1.0) * VentusConfig.windScale());
     }
 
     /**
-     * The height profile factor at a point: {@link #SURFACE_CALM} at or below the terrain, ramping
-     * smoothly to 1 at {@link #FADE_HEIGHT} blocks above it, and 0 if the sample point is submerged.
+     * The height profile factor at a point: {@link VentusConfig#surfaceCalm()} at or below the
+     * terrain, ramping smoothly to 1 at {@link VentusConfig#fadeHeight()} blocks above it, and 0 if
+     * the sample point is submerged.
      *
      * @param unknownChunkFade the factor to return when the terrain is not loaded (the caller's last
      *                         known factor, or 0 / 1 depending on the caller)
@@ -182,7 +160,9 @@ public final class WindField {
         }
 
         final double terrain = chunk.getHeight(Heightmap.Types.OCEAN_FLOOR, x & 15, z & 15);
-        return SURFACE_CALM + (1.0 - SURFACE_CALM) * smoothstep((worldPos.y() - terrain) / FADE_HEIGHT);
+        final double surfaceCalm = VentusConfig.surfaceCalm();
+        return surfaceCalm + (1.0 - surfaceCalm)
+                * smoothstep((worldPos.y() - terrain) / VentusConfig.fadeHeight());
     }
 
     /**

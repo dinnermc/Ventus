@@ -5,6 +5,7 @@ import dinner.dev.ventus.command.WindFieldCommand;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -18,6 +19,9 @@ public class Ventus {
     public static final Logger LOGGER = LogUtils.getLogger();
 
     public Ventus(IEventBus modEventBus, ModContainer modContainer) {
+        // Server-side config (config/ventus-server.toml): wind scale + per-dimension base wind.
+        modContainer.registerConfig(ModConfig.Type.SERVER, VentusConfig.SPEC);
+
         // Sample the wind for every sub-level once per game tick, before physics runs.
         NeoForge.EVENT_BUS.addListener(ServerTickEvent.Pre.class, WindSampler::tick);
 
