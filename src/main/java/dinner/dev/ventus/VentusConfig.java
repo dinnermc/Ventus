@@ -36,6 +36,9 @@ public final class VentusConfig {
     public static final ModConfigSpec.DoubleValue GUST_AMPLITUDE;
     public static final ModConfigSpec.DoubleValue GUST_LATERAL_FRACTION;
 
+    public static final ModConfigSpec.DoubleValue RAIN_MULTIPLIER;
+    public static final ModConfigSpec.DoubleValue THUNDER_MULTIPLIER;
+
     public static final ModConfigSpec.DoubleValue OVERWORLD_MAGNITUDE;
     public static final ModConfigSpec.DoubleValue OVERWORLD_DIRECTION;
     public static final ModConfigSpec.DoubleValue NETHER_MAGNITUDE;
@@ -103,6 +106,20 @@ public final class VentusConfig {
                         "0.0 = purely a speed change; small values (0.2-0.4) add a little wander.")
                 .defineInRange("gustLateralFraction", 0.3, 0.0, 1.0);
 
+        RAIN_MULTIPLIER = builder
+                .comment("Strength the pressure field and the gusts reach at full rain, as a multiple of",
+                        "their dry-weather strength. It is applied against the dimension's rain LEVEL,",
+                        "which vanilla fades in and out over ~5 seconds, so the wind builds and eases",
+                        "instead of stepping. The base wind itself is not touched: rain roughens the air",
+                        "without changing the prevailing direction or its average strength.")
+                .defineInRange("rainMultiplier", 1.5, 1.0, 10.0);
+
+        THUNDER_MULTIPLIER = builder
+                .comment("Strength reached at full thunder, applied on top of rainMultiplier. Vanilla's",
+                        "thunder level is already gated by the rain level, so a storm multiplies the",
+                        "field by rainMultiplier * thunderMultiplier and dry weather leaves it at 1.0.")
+                .defineInRange("thunderMultiplier", 1.6, 1.0, 10.0);
+
         builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
                         "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
                 .push("dimensions");
@@ -149,6 +166,20 @@ public final class VentusConfig {
      */
     public static double surfaceCalm() {
         return SURFACE_CALM.get();
+    }
+
+    /**
+     * @return the multiplier applied to the field and gusts wherever it is raining
+     */
+    public static double rainMultiplier() {
+        return RAIN_MULTIPLIER.get();
+    }
+
+    /**
+     * @return the extra multiplier applied during a thunderstorm (on top of {@link #rainMultiplier()})
+     */
+    public static double thunderMultiplier() {
+        return THUNDER_MULTIPLIER.get();
     }
 
     /**

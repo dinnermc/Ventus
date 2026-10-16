@@ -31,6 +31,10 @@ import org.joml.Vector3dc;
  * pressure field. It is applied mostly <em>along</em> the local wind direction with a small lateral
  * component, so it feels like the wind speeding up and easing off rather than changing direction. Its
  * amplitude is a fraction of the base wind.
+ * <p>
+ * <b>Weather (stage 3).</b> A scalar {@code weather} multiplier (rain, then thunder) is applied to the
+ * field and the gusts but never to the base wind, so a storm makes the air rougher without shifting
+ * the prevailing direction or its average strength.
  */
 public final class WindModel {
     private WindModel() {
@@ -102,6 +106,37 @@ public final class WindModel {
     }
 
     /**
+     * Weather scaling for the perturbations, from the dimension's continuous weather levels.
+     *
+     * <p>Vanilla fades {@code rainLevel} and {@code thunderLevel} in and out by 0.01 per tick, so
+     * feeding those levels (rather than the boolean "is it raining?" flags) makes the wind strengthen
+     * and ease over those same ~5 seconds. There is no step at the threshold the flags use, and no
+     * per-position biome or heightmap lookup: the weather is global to the dimension, which is all the
+     * field needs.
+     *
+     * <p>At full rain the result is {@code rainMultiplier}, and at full rain <em>and</em> full thunder
+     * it is {@code rainMultiplier * thunderMultiplier}. Both multipliers are at least 1, so this only
+     * ever roughens the air.
+     *
+     * @param rainMultiplier  the config multiplier applied at full rain
+     * @param thunderMultiplier the config multiplier applied at full thunder
+     * @param rainLevel       {@code level.getRainLevel(1.0F)}, in {@code [0, 1]}
+     * @param thunderLevel    {@code level.getThunderLevel(1.0F)}, in {@code [0, 1]}; vanilla already
+     *                        folds the rain level into it, so it is 0 whenever it is not raining
+     * @return the multiplier to apply to the field and gusts (1 = no weather)
+     */
+    public static double weatherScale(final double rainMultiplier, final double thunderMultiplier,
+            final double rainLevel, final double thunderLevel) {
+        if (rainLevel <= 0.0) {
+            return 1.0;
+        }
+
+        final double rainScale = 1.0 + (rainMultiplier - 1.0) * rainLevel;
+        final double thunderScale = 1.0 + (thunderMultiplier - 1.0) * thunderLevel;
+        return rainScale * thunderScale;
+    }
+
+    /**
      * Evaluates the field at a point and time.
      *
      * @param pressure    the pressure potential
@@ -110,12 +145,15 @@ public final class WindModel {
      * @param z           world Z (blocks)
      * @param timeSeconds world game time in seconds ({@code level.getGameTime() / 20.0})
      * @param base        the dimension's base wind (horizontal; its Y is ignored)
+     * @param weather     rain/storm scaling applied to the perturbations only (1 = no weather);
+     *                    the base wind is never scaled by it
      * @param settings    the tunable inputs
      * @param out         the result to fill (reused)
      * @return {@code out}
      */
     public static Result evaluate(final Noise3 pressure, final Noise3 gust, final double x, final double z,
-            final double timeSeconds, final Vector3dc base, final Settings settings, final Result out) {
+            final double timeSeconds, final Vector3dc base, final double weather,
+            final Settings settings, final Result out) {
         out.reset();
 
         final double baseMag = base.length();
@@ -133,6 +171,7 @@ public final class WindModel {
 
         final double gain = settings.strength() * baseMag / GRAD_REFERENCE;
         out.field.set(-gz * gain, 0.0, gx * gain);
+        out.field.mul(weather);
         out.total.add(out.field);
 
         // Gusts: along the local (base + field) wind, with a small lateral component.
@@ -146,7 +185,7 @@ public final class WindModel {
                 final double ngt = timeSeconds / settings.gustPeriod();
                 final double along = gust.at(ngx, ngz, ngt);
                 final double across = gust.at(ngx + GUST_LATERAL_OFFSET_X, ngz + GUST_LATERAL_OFFSET_Z, ngt);
-                final double amp = settings.gustAmplitude() * baseMag;
+                final double amp = settings.gustAmplitude() * baseMag * weather;
                 final double lateral = settings.gustLateralFraction() * across;
                 out.gust.set((dirX * along - dirZ * lateral) * amp, 0.0, (dirZ * along + dirX * lateral) * amp);
                 out.total.add(out.gust);

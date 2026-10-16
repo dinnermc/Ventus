@@ -108,7 +108,7 @@ public final class WindFieldCommand {
         source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
                 "[Ventus] sub-level=%s%n"
                         + "  windActive=%s  wind=(%.3f, %.3f, %.3f)%n"
-                        + "  heightFactor=%.3f  capped=%s%n"
+                        + "  heightFactor=%.3f  weather=%.2f  capped=%s%n"
                         + "  base=(%.3f, %.3f, %.3f)%n"
                         + "  field=(%.3f, %.3f, %.3f)%n"
                         + "  gust=(%.3f, %.3f, %.3f)%n"
@@ -118,7 +118,7 @@ public final class WindFieldCommand {
                         + "  air-relative=(%.3f, %.3f, %.3f)",
                 subLevel.getUniqueId(),
                 windActive, wind.x, wind.y, wind.z,
-                parts.heightFactor, parts.capped,
+                parts.heightFactor, parts.weather, parts.capped,
                 parts.base.x, parts.base.y, parts.base.z,
                 parts.field.x, parts.field.y, parts.field.z,
                 parts.gust.x, parts.gust.y, parts.gust.z,

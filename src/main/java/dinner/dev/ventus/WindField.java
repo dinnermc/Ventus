@@ -110,6 +110,16 @@ public final class WindField {
     private static final Breakdown BREAKDOWN = new Breakdown();
 
     /**
+     * Rain/storm scaling for the perturbations, taken from the dimension's continuous weather levels
+     * rather than the raining/thundering flags — see {@link WindModel#weatherScale}. Global to the
+     * dimension, so this costs two float reads and no chunk, heightmap or biome lookup.
+     */
+    private static double weatherMultiplier(final ServerLevel level) {
+        return WindModel.weatherScale(VentusConfig.rainMultiplier(), VentusConfig.thunderMultiplier(),
+                level.getRainLevel(1.0F), level.getThunderLevel(1.0F));
+    }
+
+    /**
      * @return {@code true} when the global kill switch ({@code -Dventus.disableWind}) is on, in
      * which case the field is zero everywhere and no work needs doing
      */
@@ -149,10 +159,11 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
 
-        // base wind + pressure field + gusts, then the height, fade-in and global scale.
+        // base wind + pressure field + gusts (scaled by weather), then height, fade-in and windScale.
         final NoiseSet noise = noiseSet(level);
         WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
-                level.getGameTime() / 20.0, dest, VentusConfig.windModelSettings(), MODEL_RESULT);
+                level.getGameTime() / 20.0, dest, weatherMultiplier(level),
+                VentusConfig.windModelSettings(), MODEL_RESULT);
         dest.set(MODEL_RESULT.total);
         dest.mul(fade * entryRamp(level, carrier) * VentusConfig.windScale());
     }
@@ -176,6 +187,7 @@ public final class WindField {
         dest.gust.set(0.0, 0.0, 0.0);
         dest.total.set(0.0, 0.0, 0.0);
         dest.heightFactor = 1.0;
+        dest.weather = 1.0;
         dest.capped = false;
 
         if (!ENABLED) {
@@ -197,8 +209,11 @@ public final class WindField {
         dest.heightFactor = fade;
 
         final NoiseSet noise = noiseSet(level);
+        final double weather = weatherMultiplier(level);
+        dest.weather = weather;
         WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
-                level.getGameTime() / 20.0, dest.base, VentusConfig.windModelSettings(), MODEL_RESULT);
+                level.getGameTime() / 20.0, dest.base, weather, VentusConfig.windModelSettings(),
+                MODEL_RESULT);
 
         final double scale = fade * VentusConfig.windScale();
         dest.base.mul(scale);
@@ -216,6 +231,8 @@ public final class WindField {
         public final Vector3d gust = new Vector3d();
         public final Vector3d total = new Vector3d();
         public double heightFactor;
+        /** Rain/storm scaling applied to {@link #field} and {@link #gust} (1 = dry). */
+        public double weather;
         public boolean capped;
 
         /** Copies {@link #total} into {@code dest} and returns it. */

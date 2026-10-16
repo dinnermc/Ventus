@@ -18,6 +18,7 @@ sub-level, then read by the physics hooks (`ServerSubLevelWindMixin`). It is bui
 | Base wind | `config/ventus-server.toml` | Magnitude (m/s) + direction (degrees) per dimension. Default: Overworld **3 m/s toward +X (east)**, Nether and End calm. |
 | Pressure field | config: `fieldScale`, `fieldPeriod`, `fieldStrength` | A 3D-simplex pressure potential `P(x/L, z/L, t/T)`; its gradient rotated 90° in the XZ plane deflects the base wind so the prevailing direction still dominates but the wind turns and varies across `fieldScale` (1500) blocks and `fieldPeriod` (1200 s). `fieldStrength` scales it (1 = typical deflection equals the base wind). |
 | Gusts | config: `gustScale`, `gustPeriod`, `gustAmplitude`, `gustLateralFraction` | A second, shorter-wavelength noise that puffs mostly **along** the wind (with a small lateral fraction), at `gustAmplitude` (35%) of the base wind, over `gustScale` (150) blocks and `gustPeriod` (120 s). |
+| Weather | config: `rainMultiplier`, `thunderMultiplier` | The field and the gusts are scaled by the dimension's **rain and thunder levels**, which vanilla fades in and out over ~5 s: `1 + (rainMultiplier − 1) × rainLevel`, then `1 + (thunderMultiplier − 1) × thunderLevel` on top (1.5 × 1.6 = **2.4** at full storm). Using the continuous levels rather than the raining/thundering flags means no step at the threshold and no per-position biome, heightmap or chunk lookup. The **base wind is not scaled** — weather roughens the air without moving the prevailing direction. |
 | Height profile | config: `fadeHeight`, `surfaceCalm` | Wind ramps with altitude above the terrain: `surfaceCalm` (10%) at the surface to full at `fadeHeight` (32 blocks), smoothstep in between. Uses vanilla `OCEAN_FLOOR` heightmap (solid blocks; **water ignored**, **leaves count as terrain**), so a boat floating on the sea sits above its reference and still catches the wind, while a plane parked on the ground feels almost nothing. A **submerged** sample point (centre block holds a fluid) gets **zero** wind. |
 | Fade-in | `WindField` | 0 to full over **5 seconds** after a sub-level's first sample, so nothing jolts on world load or when a sub-level enters a windy region. |
 | Cap | config: `maxWindMultiplier` | The total never exceeds this multiple (**3×**) of the dimension's base wind magnitude, so an extreme noise value or bad parameter can never produce an absurd wind. |
@@ -29,7 +30,7 @@ sub-level starts from zero) instead of jumping to full wind.
 Direction convention: **0° = +X (east)**, **90° = +Z (south)**, in the XZ plane.
 
 The field math lives in `WindModel`, a Minecraft-free class (JOML only) with unit tests in
-`src/test`. Later stages: rain/thunder scaling, then registration with Sable's own wind-provider API.
+`src/test`. The one remaining stage on the roadmap is registration with Sable's own wind-provider API.
 
 ### Tuning
 
@@ -47,6 +48,8 @@ gustScale = 150.0
 gustPeriod = 120.0
 gustAmplitude = 0.35
 gustLateralFraction = 0.3
+rainMultiplier = 1.5
+thunderMultiplier = 1.6
 
 [dimensions.overworld]
     magnitude = 3.0
@@ -141,6 +144,17 @@ Stage 2 checks:
    mostly along the same direction. Still no discontinuities.
 5. **No beachballing (2b)** — with gusts on, tick time should be unaffected (two extra noise samples
    per sub-level per tick).
+
+Stage 3 checks:
+
+1. **Rain roughens the field (3)** — run `/weather rain` and immediately start sampling
+   `/windfield info` once a second: `weather` must **climb** from `1.00` towards `1.50` over the ~5 s
+   vanilla takes to fade the rain in, never jump. `field` and `gust` grow by that factor while `base`
+   stays put.
+2. **Storm is stronger (3)** — `/weather thunder` → `weather` eases up to `2.40` (1.5 × 1.6).
+3. **Indoors is not a shelter (3)** — the weather is global to the dimension, so a closed hangar
+   reports the same `weather` as open sky; only changing dimension (Nether/End, whose rain level is
+   always 0) brings it back to `1.00`.
 
 Client checks:
 
