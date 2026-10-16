@@ -78,6 +78,27 @@ Example:
 
 These map to the `-Dventus.wind` / `-Dventus.disableWind` / `-Dventus.debugWind` system properties.
 
+## Wind compass (client)
+
+A small circular compass sits at the **top centre of the HUD**:
+
+- the rim is marked **N / E / S / W** in world terms, so it rotates with your view like a real
+  compass (north is red);
+- the **needle points downwind**, and its colour tracks the speed (grey → cyan → amber → red);
+- underneath it shows the speed (e.g. `3.2 m/s`) and the heading the wind is blowing **towards**
+  (e.g. `090° E`), or `CALM` when there is none.
+
+**F8** shows/hides it (rebindable under *Options → Controls → Ventus*; it starts visible, and the
+toggle does not persist between sessions).
+
+The compass is fed by a small clientbound packet carrying the wind at your own eye position — the same
+field the physics hooks use, sampled at you rather than at a sub-level. The client cannot evaluate the
+field itself (the noise is seeded from the world seed, which only the server has), so the server
+pushes it at 5 Hz, and only when the value has moved by more than 0.05 m/s: a player standing still
+costs almost nothing, and the payload is twelve bytes. The channel is registered as **optional**, so a
+client without Ventus can still join a server that has it — it simply never receives the packet, and
+the compass stays hidden.
+
 ## Commands
 
 `/windfield info` (permission level 2) reports, for the sub-level you are standing on or riding:
@@ -120,6 +141,12 @@ Stage 2 checks:
    mostly along the same direction. Still no discontinuities.
 5. **No beachballing (2b)** — with gusts on, tick time should be unaffected (two extra noise samples
    per sub-level per tick).
+
+Client checks:
+
+1. **Compass** — F8 hides/shows it; turn in place and the rim letters move while the needle stays
+   fixed on the wind; fly up to `fadeHeight` and the speed climbs; the needle must never jump.
+2. **Rebind** — Options → Controls → Ventus → *Toggle Wind Compass* accepts another key.
 
 ## Building & testing
 
