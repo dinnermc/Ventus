@@ -27,7 +27,10 @@ import org.joml.Vector3dc;
  * A hard <b>cap</b> ({@code maxMultiplier * base}) bounds the result so a bad parameter or an extreme
  * noise value can never produce an absurd wind or a NaN.
  * <p>
- * Stage 2b adds short-scale gusts on top of this (see {@link #evaluate}).
+ * <b>Gusts (stage 2b).</b> A second, shorter-wavelength noise adds faster variation on top of the
+ * pressure field. It is applied mostly <em>along</em> the local wind direction with a small lateral
+ * component, so it feels like the wind speeding up and easing off rather than changing direction. Its
+ * amplitude is a fraction of the base wind.
  */
 public final class WindModel {
     private WindModel() {
@@ -53,14 +56,27 @@ public final class WindModel {
     private static final double GRAD_REFERENCE = 0.4163;
 
     /**
+     * A fixed offset (in gust noise space) used to sample a second, decorrelated scalar from the same
+     * gust noise for the lateral component. Sampling one noise field twice is cheaper than carrying a
+     * second {@link Noise3} and is just as smooth.
+     */
+    private static final double GUST_LATERAL_OFFSET_X = 5.0;
+    private static final double GUST_LATERAL_OFFSET_Z = -2.0;
+
+    /**
      * The tunable inputs, mirroring the server config (see {@link VentusConfig}).
      *
-     * @param fieldScale  map scale: the size in blocks of the largest wind structures ({@code L})
-     * @param fieldPeriod seconds for the field to evolve noticeably ({@code T})
-     * @param strength    multiplier on the perturbation (1 = typical perturbation equals the base wind)
-     * @param maxMultiplier hard cap: the wind never exceeds this times the base wind
+     * @param fieldScale           map scale: the size in blocks of the largest wind structures ({@code L})
+     * @param fieldPeriod          seconds for the field to evolve noticeably ({@code T})
+     * @param strength             multiplier on the perturbation (1 = typical perturbation equals the base wind)
+     * @param maxMultiplier        hard cap: the wind never exceeds this times the base wind
+     * @param gustScale            map scale in blocks of the gusts (smaller than {@code fieldScale})
+     * @param gustPeriod           seconds for a gust to build and fade
+     * @param gustAmplitude        gust strength as a fraction of the base wind
+     * @param gustLateralFraction  how much of the gust pushes sideways (0 = purely along the wind)
      */
-    public record Settings(double fieldScale, double fieldPeriod, double strength, double maxMultiplier) {
+    public record Settings(double fieldScale, double fieldPeriod, double strength, double maxMultiplier,
+            double gustScale, double gustPeriod, double gustAmplitude, double gustLateralFraction) {
     }
 
     /**
@@ -70,13 +86,16 @@ public final class WindModel {
     public static final class Result {
         /** The pressure-field perturbation (before the cap). */
         public final Vector3d field = new Vector3d();
-        /** {@code base + field}, capped at {@code maxMultiplier * base} (horizontal only). */
+        /** The gust contribution (before the cap); zero when gusts are off. */
+        public final Vector3d gust = new Vector3d();
+        /** {@code base + field + gust}, capped at {@code maxMultiplier * base} (horizontal only). */
         public final Vector3d total = new Vector3d();
         /** Whether the cap clamped {@link #total}. */
         public boolean capped;
 
         void reset() {
             this.field.set(0.0, 0.0, 0.0);
+            this.gust.set(0.0, 0.0, 0.0);
             this.total.set(0.0, 0.0, 0.0);
             this.capped = false;
         }
@@ -86,6 +105,7 @@ public final class WindModel {
      * Evaluates the field at a point and time.
      *
      * @param pressure    the pressure potential
+     * @param gust        the gust noise, or {@code null} to disable gusts
      * @param x           world X (blocks)
      * @param z           world Z (blocks)
      * @param timeSeconds world game time in seconds ({@code level.getGameTime() / 20.0})
@@ -94,7 +114,7 @@ public final class WindModel {
      * @param out         the result to fill (reused)
      * @return {@code out}
      */
-    public static Result evaluate(final Noise3 pressure, final double x, final double z,
+    public static Result evaluate(final Noise3 pressure, final Noise3 gust, final double x, final double z,
             final double timeSeconds, final Vector3dc base, final Settings settings, final Result out) {
         out.reset();
 
@@ -114,6 +134,24 @@ public final class WindModel {
         final double gain = settings.strength() * baseMag / GRAD_REFERENCE;
         out.field.set(-gz * gain, 0.0, gx * gain);
         out.total.add(out.field);
+
+        // Gusts: along the local (base + field) wind, with a small lateral component.
+        if (gust != null && settings.gustAmplitude() > 0.0) {
+            final double dirLen = Math.hypot(out.total.x, out.total.z);
+            if (dirLen > 1e-9) {
+                final double dirX = out.total.x / dirLen;
+                final double dirZ = out.total.z / dirLen;
+                final double ngx = x / settings.gustScale();
+                final double ngz = z / settings.gustScale();
+                final double ngt = timeSeconds / settings.gustPeriod();
+                final double along = gust.at(ngx, ngz, ngt);
+                final double across = gust.at(ngx + GUST_LATERAL_OFFSET_X, ngz + GUST_LATERAL_OFFSET_Z, ngt);
+                final double amp = settings.gustAmplitude() * baseMag;
+                final double lateral = settings.gustLateralFraction() * across;
+                out.gust.set((dirX * along - dirZ * lateral) * amp, 0.0, (dirZ * along + dirX * lateral) * amp);
+                out.total.add(out.gust);
+            }
+        }
 
         final double cap = settings.maxMultiplier() * baseMag;
         final double mag2 = out.total.lengthSquared();

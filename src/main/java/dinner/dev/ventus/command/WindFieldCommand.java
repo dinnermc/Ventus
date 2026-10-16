@@ -111,6 +111,7 @@ public final class WindFieldCommand {
                         + "  heightFactor=%.3f  capped=%s%n"
                         + "  base=(%.3f, %.3f, %.3f)%n"
                         + "  field=(%.3f, %.3f, %.3f)%n"
+                        + "  gust=(%.3f, %.3f, %.3f)%n"
                         + "  total=(%.3f, %.3f, %.3f)%n"
                         + "  universalDrag=%.3f  mass=%s%n"
                         + "  subLevelVel=(%.3f, %.3f, %.3f)%n"
@@ -120,6 +121,7 @@ public final class WindFieldCommand {
                 parts.heightFactor, parts.capped,
                 parts.base.x, parts.base.y, parts.base.z,
                 parts.field.x, parts.field.y, parts.field.z,
+                parts.gust.x, parts.gust.y, parts.gust.z,
                 parts.total.x, parts.total.y, parts.total.z,
                 universalDrag, massText,
                 subLevelVelocity.x, subLevelVelocity.y, subLevelVelocity.z,

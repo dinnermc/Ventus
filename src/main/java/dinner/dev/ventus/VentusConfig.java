@@ -31,6 +31,11 @@ public final class VentusConfig {
     public static final ModConfigSpec.DoubleValue FIELD_STRENGTH;
     public static final ModConfigSpec.DoubleValue MAX_WIND_MULTIPLIER;
 
+    public static final ModConfigSpec.DoubleValue GUST_SCALE;
+    public static final ModConfigSpec.DoubleValue GUST_PERIOD;
+    public static final ModConfigSpec.DoubleValue GUST_AMPLITUDE;
+    public static final ModConfigSpec.DoubleValue GUST_LATERAL_FRACTION;
+
     public static final ModConfigSpec.DoubleValue OVERWORLD_MAGNITUDE;
     public static final ModConfigSpec.DoubleValue OVERWORLD_DIRECTION;
     public static final ModConfigSpec.DoubleValue NETHER_MAGNITUDE;
@@ -78,6 +83,25 @@ public final class VentusConfig {
                 .comment("Hard cap: the total wind never exceeds this multiple of the dimension's base",
                         "wind magnitude. Protects against extreme noise values or bad parameters.")
                 .defineInRange("maxWindMultiplier", 3.0, 1.0, 10.0);
+
+        GUST_SCALE = builder
+                .comment("Map scale (blocks) of the gusts: smaller than fieldScale, so gusts are",
+                        "local and fiddly rather than broad weather systems.")
+                .defineInRange("gustScale", 150.0, 20.0, 10000.0);
+
+        GUST_PERIOD = builder
+                .comment("Seconds for a gust to build and fade. Much shorter than fieldPeriod.")
+                .defineInRange("gustPeriod", 120.0, 5.0, 86400.0);
+
+        GUST_AMPLITUDE = builder
+                .comment("Gust strength as a fraction of the base wind. 0.0 disables gusts; 0.3-0.4",
+                        "gives a noticeable but not disorienting puffiness.")
+                .defineInRange("gustAmplitude", 0.35, 0.0, 2.0);
+
+        GUST_LATERAL_FRACTION = builder
+                .comment("How much of the gust pushes sideways rather than along the wind.",
+                        "0.0 = purely a speed change; small values (0.2-0.4) add a little wander.")
+                .defineInRange("gustLateralFraction", 0.3, 0.0, 1.0);
 
         builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
                         "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
@@ -135,7 +159,11 @@ public final class VentusConfig {
                 FIELD_SCALE.get(),
                 FIELD_PERIOD.get(),
                 FIELD_STRENGTH.get(),
-                MAX_WIND_MULTIPLIER.get());
+                MAX_WIND_MULTIPLIER.get(),
+                GUST_SCALE.get(),
+                GUST_PERIOD.get(),
+                GUST_AMPLITUDE.get(),
+                GUST_LATERAL_FRACTION.get());
     }
 
     /**

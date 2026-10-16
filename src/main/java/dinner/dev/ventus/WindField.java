@@ -81,7 +81,7 @@ public final class WindField {
     /** Per-dimension noise, rebuilt whenever the world seed changes. Server-thread only. */
     private static final Map<ResourceKey<Level>, NoiseSet> NOISE = new HashMap<>();
 
-    private record NoiseSet(long seed, SimplexNoise pressure) {
+    private record NoiseSet(long seed, SimplexNoise pressure, SimplexNoise gust) {
     }
 
     private static NoiseSet noiseSet(final ServerLevel level) {
@@ -92,7 +92,11 @@ public final class WindField {
         if (set == null || set.seed() != seed) {
             // Mix the world seed with the dimension's id so each dimension gets its own weather.
             final long mixed = seed * 0x9E3779B97F4A7C15L + dimension.location().hashCode();
-            set = new NoiseSet(seed, new SimplexNoise(RandomSource.create(mixed)));
+            // The gust noise uses a different seed so the two fields are independent.
+            final long gustSeed = mixed + 0x9E3779B97F4A7C15L;
+            set = new NoiseSet(seed,
+                    new SimplexNoise(RandomSource.create(mixed)),
+                    new SimplexNoise(RandomSource.create(gustSeed)));
             NOISE.put(dimension, set);
         }
 
@@ -145,9 +149,9 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
 
-        // base wind + pressure field, then the height, fade-in and global scale.
+        // base wind + pressure field + gusts, then the height, fade-in and global scale.
         final NoiseSet noise = noiseSet(level);
-        WindModel.evaluate(noise.pressure()::getValue, worldPos.x(), worldPos.z(),
+        WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
                 level.getGameTime() / 20.0, dest, VentusConfig.windModelSettings(), MODEL_RESULT);
         dest.set(MODEL_RESULT.total);
         dest.mul(fade * entryRamp(level, carrier) * VentusConfig.windScale());
@@ -169,6 +173,7 @@ public final class WindField {
     public static Breakdown breakdown(final ServerLevel level, final Vector3dc worldPos, final Breakdown dest) {
         dest.base.set(0.0, 0.0, 0.0);
         dest.field.set(0.0, 0.0, 0.0);
+        dest.gust.set(0.0, 0.0, 0.0);
         dest.total.set(0.0, 0.0, 0.0);
         dest.heightFactor = 1.0;
         dest.capped = false;
@@ -192,12 +197,13 @@ public final class WindField {
         dest.heightFactor = fade;
 
         final NoiseSet noise = noiseSet(level);
-        WindModel.evaluate(noise.pressure()::getValue, worldPos.x(), worldPos.z(),
+        WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
                 level.getGameTime() / 20.0, dest.base, VentusConfig.windModelSettings(), MODEL_RESULT);
 
         final double scale = fade * VentusConfig.windScale();
         dest.base.mul(scale);
         dest.field.set(MODEL_RESULT.field).mul(scale);
+        dest.gust.set(MODEL_RESULT.gust).mul(scale);
         dest.total.set(MODEL_RESULT.total).mul(scale);
         dest.capped = MODEL_RESULT.capped;
         return dest;
@@ -207,6 +213,7 @@ public final class WindField {
     public static final class Breakdown {
         public final Vector3d base = new Vector3d();
         public final Vector3d field = new Vector3d();
+        public final Vector3d gust = new Vector3d();
         public final Vector3d total = new Vector3d();
         public double heightFactor;
         public boolean capped;
