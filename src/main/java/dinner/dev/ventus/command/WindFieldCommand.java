@@ -85,6 +85,9 @@ public final class WindFieldCommand {
         }
         final boolean windActive = wind.lengthSquared() != 0.0;
 
+        // The steady-state breakdown of the field at the sample point (base / field / height / total).
+        final WindField.Breakdown parts = WindField.breakdown(level, worldPos, new WindField.Breakdown());
+
         // The two inputs the d*w impulse needs: a positive drag coefficient and a positive mass.
         final double universalDrag = DimensionPhysicsData.getUniversalDrag(level);
         Double massValue = null;
@@ -105,11 +108,19 @@ public final class WindFieldCommand {
         source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
                 "[Ventus] sub-level=%s%n"
                         + "  windActive=%s  wind=(%.3f, %.3f, %.3f)%n"
+                        + "  heightFactor=%.3f  capped=%s%n"
+                        + "  base=(%.3f, %.3f, %.3f)%n"
+                        + "  field=(%.3f, %.3f, %.3f)%n"
+                        + "  total=(%.3f, %.3f, %.3f)%n"
                         + "  universalDrag=%.3f  mass=%s%n"
                         + "  subLevelVel=(%.3f, %.3f, %.3f)%n"
                         + "  air-relative=(%.3f, %.3f, %.3f)",
                 subLevel.getUniqueId(),
                 windActive, wind.x, wind.y, wind.z,
+                parts.heightFactor, parts.capped,
+                parts.base.x, parts.base.y, parts.base.z,
+                parts.field.x, parts.field.y, parts.field.z,
+                parts.total.x, parts.total.y, parts.total.z,
                 universalDrag, massText,
                 subLevelVelocity.x, subLevelVelocity.y, subLevelVelocity.z,
                 relativeVelocity.x, relativeVelocity.y, relativeVelocity.z)), false);

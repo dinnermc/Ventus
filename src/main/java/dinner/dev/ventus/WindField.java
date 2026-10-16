@@ -1,12 +1,19 @@
 package dinner.dev.ventus;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.levelgen.synth.SimplexNoise;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
+
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * The wind field (stage 1).
@@ -71,6 +78,33 @@ public final class WindField {
         }
     }
 
+    /** Per-dimension noise, rebuilt whenever the world seed changes. Server-thread only. */
+    private static final Map<ResourceKey<Level>, NoiseSet> NOISE = new HashMap<>();
+
+    private record NoiseSet(long seed, SimplexNoise pressure) {
+    }
+
+    private static NoiseSet noiseSet(final ServerLevel level) {
+        final ResourceKey<Level> dimension = level.dimension();
+        final long seed = level.getSeed();
+
+        NoiseSet set = NOISE.get(dimension);
+        if (set == null || set.seed() != seed) {
+            // Mix the world seed with the dimension's id so each dimension gets its own weather.
+            final long mixed = seed * 0x9E3779B97F4A7C15L + dimension.location().hashCode();
+            set = new NoiseSet(seed, new SimplexNoise(RandomSource.create(mixed)));
+            NOISE.put(dimension, set);
+        }
+
+        return set;
+    }
+
+    /** Scratch result reused by every sample; the server thread is the only caller. */
+    private static final WindModel.Result MODEL_RESULT = new WindModel.Result();
+
+    /** Scratch breakdown reused by the diagnostics command. */
+    private static final Breakdown BREAKDOWN = new Breakdown();
+
     /**
      * @return {@code true} when the global kill switch ({@code -Dventus.disableWind}) is on, in
      * which case the field is zero everywhere and no work needs doing
@@ -110,29 +144,77 @@ public final class WindField {
 
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
+
+        // base wind + pressure field, then the height, fade-in and global scale.
+        final NoiseSet noise = noiseSet(level);
+        WindModel.evaluate(noise.pressure()::getValue, worldPos.x(), worldPos.z(),
+                level.getGameTime() / 20.0, dest, VentusConfig.windModelSettings(), MODEL_RESULT);
+        dest.set(MODEL_RESULT.total);
         dest.mul(fade * entryRamp(level, carrier) * VentusConfig.windScale());
     }
 
     /**
      * A one-off, steady-state sample at a point, for diagnostics (the {@code /windfield} command).
-     * Unlike {@link #sample} it does not touch any sub-level state, applies no temporal fade-in, and
-     * assumes full wind when the terrain is unknown.
      */
     public static Vector3d sampleAt(final ServerLevel level, final Vector3dc worldPos, final Vector3d dest) {
+        return breakdown(level, worldPos, BREAKDOWN).into(dest);
+    }
+
+    /**
+     * Fills {@code dest} with the separated components of the steady-state wind at a point: the base
+     * wind, the pressure-field perturbation, the height factor and the capped total. Unlike
+     * {@link #sample} it touches no sub-level state, applies no temporal fade-in, and assumes full
+     * wind when the terrain is unknown.
+     */
+    public static Breakdown breakdown(final ServerLevel level, final Vector3dc worldPos, final Breakdown dest) {
+        dest.base.set(0.0, 0.0, 0.0);
+        dest.field.set(0.0, 0.0, 0.0);
+        dest.total.set(0.0, 0.0, 0.0);
+        dest.heightFactor = 1.0;
+        dest.capped = false;
+
         if (!ENABLED) {
-            return dest.set(0.0, 0.0, 0.0);
-        }
-
-        if (FIXED_OVERRIDE != null) {
-            return dest.set(FIXED_OVERRIDE);
-        }
-
-        VentusConfig.baseWind(level.dimension(), dest);
-        if (dest.lengthSquared() == 0.0) {
             return dest;
         }
 
-        return dest.mul(fadeAt(level, worldPos, 1.0) * VentusConfig.windScale());
+        if (FIXED_OVERRIDE != null) {
+            dest.base.set(FIXED_OVERRIDE);
+            dest.total.set(FIXED_OVERRIDE);
+            return dest;
+        }
+
+        VentusConfig.baseWind(level.dimension(), dest.base);
+        if (dest.base.lengthSquared() == 0.0) {
+            return dest;
+        }
+
+        final double fade = fadeAt(level, worldPos, 1.0);
+        dest.heightFactor = fade;
+
+        final NoiseSet noise = noiseSet(level);
+        WindModel.evaluate(noise.pressure()::getValue, worldPos.x(), worldPos.z(),
+                level.getGameTime() / 20.0, dest.base, VentusConfig.windModelSettings(), MODEL_RESULT);
+
+        final double scale = fade * VentusConfig.windScale();
+        dest.base.mul(scale);
+        dest.field.set(MODEL_RESULT.field).mul(scale);
+        dest.total.set(MODEL_RESULT.total).mul(scale);
+        dest.capped = MODEL_RESULT.capped;
+        return dest;
+    }
+
+    /** The separated wind components at a point, for the {@code /windfield} command. */
+    public static final class Breakdown {
+        public final Vector3d base = new Vector3d();
+        public final Vector3d field = new Vector3d();
+        public final Vector3d total = new Vector3d();
+        public double heightFactor;
+        public boolean capped;
+
+        /** Copies {@link #total} into {@code dest} and returns it. */
+        public Vector3d into(final Vector3d dest) {
+            return dest.set(this.total);
+        }
     }
 
     /**

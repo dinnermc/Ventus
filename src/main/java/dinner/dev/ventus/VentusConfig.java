@@ -26,6 +26,11 @@ public final class VentusConfig {
     public static final ModConfigSpec.DoubleValue FADE_HEIGHT;
     public static final ModConfigSpec.DoubleValue SURFACE_CALM;
 
+    public static final ModConfigSpec.DoubleValue FIELD_SCALE;
+    public static final ModConfigSpec.DoubleValue FIELD_PERIOD;
+    public static final ModConfigSpec.DoubleValue FIELD_STRENGTH;
+    public static final ModConfigSpec.DoubleValue MAX_WIND_MULTIPLIER;
+
     public static final ModConfigSpec.DoubleValue OVERWORLD_MAGNITUDE;
     public static final ModConfigSpec.DoubleValue OVERWORLD_DIRECTION;
     public static final ModConfigSpec.DoubleValue NETHER_MAGNITUDE;
@@ -51,6 +56,28 @@ public final class VentusConfig {
                         "Low values stop a grounded sub-level from sliding while allowing a little",
                         "weathervaning. Does not apply to submerged sub-levels, which get no wind.")
                 .defineInRange("surfaceCalm", 0.1, 0.0, 1.0);
+
+        FIELD_SCALE = builder
+                .comment("Map scale (blocks): the size of the largest wind structures.",
+                        "Smaller values give more, tighter weather systems; larger values give broad,",
+                        "slowly-varying wind. The dominant direction is unaffected.")
+                .defineInRange("fieldScale", 1500.0, 100.0, 100000.0);
+
+        FIELD_PERIOD = builder
+                .comment("Seconds for the pressure field to evolve noticeably.",
+                        "Larger values make the wind steadier over time.")
+                .defineInRange("fieldPeriod", 1200.0, 20.0, 86400.0);
+
+        FIELD_STRENGTH = builder
+                .comment("Strength of the pressure-field perturbation, as a multiple of the base wind.",
+                        "1.0 = the typical deflection is the same size as the base wind (the field",
+                        "noticeably turns and modulates it). 0.0 disables the field (base wind only).")
+                .defineInRange("fieldStrength", 1.0, 0.0, 5.0);
+
+        MAX_WIND_MULTIPLIER = builder
+                .comment("Hard cap: the total wind never exceeds this multiple of the dimension's base",
+                        "wind magnitude. Protects against extreme noise values or bad parameters.")
+                .defineInRange("maxWindMultiplier", 3.0, 1.0, 10.0);
 
         builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
                         "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
@@ -98,6 +125,17 @@ public final class VentusConfig {
      */
     public static double surfaceCalm() {
         return SURFACE_CALM.get();
+    }
+
+    /**
+     * @return the stage-2 model inputs, read fresh from the (hot-reloadable) config on every call
+     */
+    public static WindModel.Settings windModelSettings() {
+        return new WindModel.Settings(
+                FIELD_SCALE.get(),
+                FIELD_PERIOD.get(),
+                FIELD_STRENGTH.get(),
+                MAX_WIND_MULTIPLIER.get());
     }
 
     /**
