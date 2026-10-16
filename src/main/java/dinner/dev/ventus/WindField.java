@@ -1,41 +1,75 @@
 package dinner.dev.ventus;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.Mth;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
 /**
- * Prototype wind field (plan step 2).
- * <p>
- * The dumbest possible implementation: a constant wind, independent of position, time and
- * dimension. Step 6 replaces this with a real position-dependent field backed by a config.
+ * The wind field (stage 1).
  * <p>
  * Wind is expressed in <b>blocks per second</b> (Sable's physics unit, {@code 1 block/s = 1 m/s}).
  * For scale: a light breeze is 2-6, a strong wind is 10-15 and a storm is 20+.
  * <p>
- * Testing without recompiling:
- * <ul>
- *     <li>{@code -Dventus.wind=15,0,0} sets the wind vector (x,y,z); the default is {@code 5,0,0}.</li>
- *     <li>{@code -Dventus.disableWind=true} forces a calm (zero) wind regardless of the above.</li>
- * </ul>
+ * The field is the product of four factors:
+ * <ol>
+ *     <li>a per-dimension <b>base wind</b> (magnitude + direction), see {@link #baseWind};</li>
+ *     <li>a <b>height profile</b> (see {@link #fadeAt}): the wind ramps from {@link #SURFACE_CALM} at
+ *     the terrain surface up to full at {@link #FADE_HEIGHT} blocks above it. The reference surface
+ *     is vanilla's {@link Heightmap.Types#OCEAN_FLOOR} (solid blocks, <b>water ignored, leaves
+ *     counted as terrain</b>): a boat floating on the sea sits <em>above</em> its reference and
+ *     still catches the wind, while a plane parked on the ground feels almost nothing;</li>
+ *     <li>a <b>temporal fade-in</b> (see {@link #entryRamp}): the wind ramps from 0 to full over
+ *     {@link #ENTRY_RAMP_SECONDS} seconds after a sub-level's first sample, so nothing jolts when a
+ *     world loads or a sub-level enters a windy region;</li>
+ *     <li>the global {@link #WIND_SCALE} multiplier.</li>
+ * </ol>
+ * A submerged sample point (the centre block holds a fluid) yields zero wind, so a diving
+ * sub-level feels nothing.
+ * <p>
+ * These constants are the stage-1 tunables; a config file will expose them.
+ * <p>
+ * Stages 2 and 3 add a pressure field, gusts, and rain/thunder, all on top of this base.
+ * <p>
+ * <b>Debug override.</b> {@code -Dventus.wind=x,y,z} replaces the whole field with a fixed vector
+ * (no base wind, no height profile, no fade-in, no scale) so a specific vector can be dialled in
+ * from the command line. {@code -Dventus.disableWind=true} forces a calm (zero) wind. Both are
+ * development aids.
  */
 public final class WindField {
     private WindField() {
     }
 
-    private static final Vector3d DEFAULT_WIND = new Vector3d(5.0, 0.0, 0.0);
+    /** Altitude above the terrain (blocks) at which the wind reaches full strength. */
+    private static final double FADE_HEIGHT = 32.0;
 
-    private static final Vector3d WIND = parse(System.getProperty("ventus.wind"));
+    /** Fraction of the wind that still blows at the terrain surface. */
+    private static final double SURFACE_CALM = 0.1;
+
+    /** Global multiplier applied to the sampled field. */
+    private static final double WIND_SCALE = 1.0;
+
+    /** Seconds a sub-level takes to ram from no wind to full wind after its first sample. */
+    private static final double ENTRY_RAMP_SECONDS = 5.0;
 
     private static final boolean ENABLED = !Boolean.getBoolean("ventus.disableWind");
 
-    private static Vector3d parse(final String spec) {
-        if (spec == null) {
-            return new Vector3d(DEFAULT_WIND);
+    /** Fixed debug override from {@code -Dventus.wind}, or {@code null} when the field is used. */
+    private static final Vector3d FIXED_OVERRIDE = parseOverride(System.getProperty("ventus.wind"));
+
+    private static Vector3d parseOverride(final String spec) {
+        if (spec == null || spec.isBlank()) {
+            return null;
         }
 
         final String[] parts = spec.split(",");
         if (parts.length != 3) {
-            return new Vector3d(DEFAULT_WIND);
+            return null;
         }
 
         try {
@@ -44,29 +78,150 @@ public final class WindField {
                     Double.parseDouble(parts[1].trim()),
                     Double.parseDouble(parts[2].trim()));
         } catch (final NumberFormatException e) {
-            return new Vector3d(DEFAULT_WIND);
+            return null;
         }
     }
 
     /**
-     * @return the constant wind vector for this session, in blocks/second
+     * @return {@code true} when the global kill switch ({@code -Dventus.disableWind}) is on, in
+     * which case the field is zero everywhere and no work needs doing
      */
-    public static Vector3d wind() {
-        return WIND;
+    public static boolean isCalm() {
+        return !ENABLED;
     }
 
-    public static boolean isCalm() {
-        return !ENABLED || WIND.lengthSquared() == 0.0;
+    /**
+     * Writes the per-dimension base wind (magnitude in blocks/s, direction in the XZ plane).
+     * Default: Overworld 3 blocks/s toward +X (east); Nether and End calm.
+     */
+    private static void baseWind(final ResourceKey<Level> dimension, final Vector3d dest) {
+        if (Level.OVERWORLD.equals(dimension)) {
+            dest.set(3.0, 0.0, 0.0);
+        } else {
+            dest.set(0.0, 0.0, 0.0);
+        }
+    }
+
+    /**
+     * Samples the wind for one sub-level, writing it into the carrier's {@link WindCarrier#ventus$wind()}
+     * and updating the carrier's cached fade and first-sample time.
+     *
+     * @param level    the level the sub-level is in
+     * @param worldPos the sub-level's sample point, in world space
+     * @param carrier  the sub-level's wind state
+     */
+    public static void sample(final ServerLevel level, final Vector3dc worldPos, final WindCarrier carrier) {
+        final Vector3d dest = carrier.ventus$wind();
+
+        if (!ENABLED) {
+            carrier.ventus$setFade(0.0);
+            dest.set(0.0, 0.0, 0.0);
+            return;
+        }
+
+        if (FIXED_OVERRIDE != null) {
+            carrier.ventus$setFade(1.0);
+            dest.set(FIXED_OVERRIDE);
+            return;
+        }
+
+        baseWind(level.dimension(), dest);
+        if (dest.lengthSquared() == 0.0) {
+            carrier.ventus$setFade(0.0);
+            return;
+        }
+
+        final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
+        carrier.ventus$setFade(fade);
+        dest.mul(fade * entryRamp(level, carrier) * WIND_SCALE);
+    }
+
+    /**
+     * A one-off, steady-state sample at a point, for diagnostics (the {@code /windfield} command).
+     * Unlike {@link #sample} it does not touch any sub-level state, applies no temporal fade-in, and
+     * assumes full wind when the terrain is unknown.
+     */
+    public static Vector3d sampleAt(final ServerLevel level, final Vector3dc worldPos, final Vector3d dest) {
+        if (!ENABLED) {
+            return dest.set(0.0, 0.0, 0.0);
+        }
+
+        if (FIXED_OVERRIDE != null) {
+            return dest.set(FIXED_OVERRIDE);
+        }
+
+        baseWind(level.dimension(), dest);
+        if (dest.lengthSquared() == 0.0) {
+            return dest;
+        }
+
+        return dest.mul(fadeAt(level, worldPos, 1.0) * WIND_SCALE);
+    }
+
+    /**
+     * The height profile factor at a point: {@link #SURFACE_CALM} at or below the terrain, ramping
+     * smoothly to 1 at {@link #FADE_HEIGHT} blocks above it, and 0 if the sample point is submerged.
+     *
+     * @param unknownChunkFade the factor to return when the terrain is not loaded (the caller's last
+     *                         known factor, or 0 / 1 depending on the caller)
+     */
+    private static double fadeAt(final ServerLevel level, final Vector3dc worldPos, final double unknownChunkFade) {
+        final int x = Mth.floor(worldPos.x());
+        final int y = Mth.floor(worldPos.y());
+        final int z = Mth.floor(worldPos.z());
+
+        final LevelChunk chunk = level.getChunkSource().getChunkNow(x >> 4, z >> 4);
+        if (chunk == null) {
+            // Terrain unknown: reuse the last known factor rather than jumping to full wind.
+            return unknownChunkFade;
+        }
+
+        if (!chunk.getBlockState(new BlockPos(x, y, z)).getFluidState().isEmpty()) {
+            // Submerged: no wind.
+            return 0.0;
+        }
+
+        final double terrain = chunk.getHeight(Heightmap.Types.OCEAN_FLOOR, x & 15, z & 15);
+        return SURFACE_CALM + (1.0 - SURFACE_CALM) * smoothstep((worldPos.y() - terrain) / FADE_HEIGHT);
+    }
+
+    /**
+     * The temporal fade-in factor: 0 on a sub-level's first sample, ramping to 1 over
+     * {@link #ENTRY_RAMP_SECONDS} seconds of game time. Times the sub-level's first sample on the
+     * first call.
+     */
+    private static double entryRamp(final ServerLevel level, final WindCarrier carrier) {
+        final long now = level.getGameTime();
+        final Long first = carrier.ventus$firstSample();
+
+        if (first == null) {
+            carrier.ventus$setFirstSample(now);
+            return 0.0;
+        }
+
+        // A backwards clock (world reload) restarts the ramp, which is what we want.
+        return smoothstep((now - first) / (ENTRY_RAMP_SECONDS * 20.0));
+    }
+
+    private static double smoothstep(final double u) {
+        if (u <= 0.0) {
+            return 0.0;
+        }
+        if (u >= 1.0) {
+            return 1.0;
+        }
+        return u * u * (3.0 - 2.0 * u);
     }
 
     /**
      * @param worldVelocity a sub-level's material velocity in world space, in blocks/second
-     * @return the velocity relative to the air (i.e. {@code worldVelocity - wind}), never {@code null}
+     * @param wind          the wind to subtract, in blocks/second
+     * @return the velocity relative to the air ({@code worldVelocity - wind}), never {@code null}
      */
-    public static Vector3dc airRelative(final Vector3dc worldVelocity) {
-        if (isCalm()) {
+    public static Vector3dc airRelative(final Vector3dc worldVelocity, final Vector3dc wind) {
+        if (wind.lengthSquared() == 0.0) {
             return worldVelocity;
         }
-        return new Vector3d(worldVelocity).sub(WIND);
+        return new Vector3d(worldVelocity).sub(wind);
     }
 }
