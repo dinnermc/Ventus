@@ -39,13 +39,19 @@ class WindModelTest {
     /** Settings with the config defaults for the gust parameters. */
     private static WindModel.Settings settings(final double scale, final double period,
             final double strength, final double cap) {
-        return new WindModel.Settings(scale, period, strength, cap, 150.0, 120.0, 0.35, 0.3);
+        return new WindModel.Settings(scale, period, strength, cap, 150.0, 120.0, 0.35, 0.3, 0.0);
     }
 
     private static WindModel.Result evaluate(final WindModel.Noise3 pressure, final WindModel.Noise3 gust,
             final double x, final double z, final double time, final Vector3dc base, final double weather,
             final WindModel.Settings settings) {
-        return WindModel.evaluate(pressure, gust, x, z, time, base, weather, settings,
+        return evaluate(pressure, gust, x, z, time, base, weather, 0.0, settings);
+    }
+
+    private static WindModel.Result evaluate(final WindModel.Noise3 pressure, final WindModel.Noise3 gust,
+            final double x, final double z, final double time, final Vector3dc base, final double weather,
+            final double leeBoost, final WindModel.Settings settings) {
+        return WindModel.evaluate(pressure, gust, x, z, time, base, weather, leeBoost, settings,
                 new WindModel.Result());
     }
 
@@ -67,7 +73,7 @@ class WindModelTest {
 
     @Test
     void zeroGustAmplitudeLeavesTheGustComponentEmpty() {
-        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 3.0, 150, 120, 0.0, 0.3);
+        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 3.0, 150, 120, 0.0, 0.3, 0.0);
         final WindModel.Result out = evaluate(WindModelTest::pressure, WindModelTest::gust,
                 500.0, 250.0, 33.0, BASE, DRY, s);
         assertEquals(0.0, out.gust.lengthSquared(), 1e-12);
@@ -76,7 +82,7 @@ class WindModelTest {
     @Test
     void weatherScalesThePerturbationsButNotTheBaseWind() {
         // A huge cap keeps this test out of the clamp, so both perturbations scale exactly.
-        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 50.0, 150, 120, 0.35, 0.3);
+        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 50.0, 150, 120, 0.35, 0.3, 0.0);
         final WindModel.Result dry = evaluate(WindModelTest::pressure, WindModelTest::gust,
                 500.0, 250.0, 12.0, BASE, DRY, s);
         final WindModel.Result storm = evaluate(WindModelTest::pressure, WindModelTest::gust,
@@ -133,8 +139,71 @@ class WindModelTest {
     }
 
     @Test
+    void thermalNeedsSunWarmthAndDryGround() {
+        final double strength = 4.0;
+        // Every gate closed: night, cold biome, overcast, or negative noise.
+        assertEquals(0.0, WindModel.thermal(1.0, 0.0, 1.0, 1.0, strength), 1e-12);
+        assertEquals(0.0, WindModel.thermal(1.0, 1.0, 0.0, 1.0, strength), 1e-12);
+        assertEquals(0.0, WindModel.thermal(1.0, 1.0, 1.0, 0.0, strength), 1e-12);
+        // Only the positive half of the noise lifts, so the air between bubbles is still, not sinking.
+        assertEquals(0.0, WindModel.thermal(-1.0, 1.0, 1.0, 1.0, strength), 1e-12);
+        assertEquals(0.0, WindModel.thermal(-0.5, 1.0, 1.0, 1.0, strength), 1e-12);
+        // All gates open at the top of a bubble: the configured ceiling.
+        assertEquals(strength, WindModel.thermal(1.0, 1.0, 1.0, 1.0, strength), 1e-12);
+        // Half a bubble is half the ceiling.
+        assertEquals(strength / 2.0, WindModel.thermal(0.5, 1.0, 1.0, 1.0, strength), 1e-12);
+        // The gates multiply: half sun over warm ground is half a thermal.
+        assertEquals(strength / 2.0, WindModel.thermal(1.0, 0.5, 1.0, 1.0, strength), 1e-12);
+        // Nothing can push it past the ceiling, whatever the noise does.
+        assertEquals(strength, WindModel.thermal(99.0, 1.0, 1.0, 1.0, strength), 1e-12);
+    }
+
+    @Test
+    void orographicLiftIsWindSpeedTimesSlope() {
+        // Air moving at 10 m/s over ground climbing at 0.2 climbs at 2 m/s: ridge lift.
+        assertEquals(2.0, WindModel.orographic(10.0, 0.2, 1.0), 1e-12);
+        // The same slope facing away from the wind is the sink behind the ridge.
+        assertEquals(-2.0, WindModel.orographic(10.0, -0.2, 1.0), 1e-12);
+        // Flat ground, or no wind, forces nothing vertical.
+        assertEquals(0.0, WindModel.orographic(10.0, 0.0, 1.0), 1e-12);
+        assertEquals(0.0, WindModel.orographic(0.0, 0.5, 1.0), 1e-12);
+        // The strength knob scales the physical value.
+        assertEquals(1.0, WindModel.orographic(10.0, 0.2, 0.5), 1e-12);
+    }
+
+    @Test
+    void leeGustBoostIsOnlyForTheLeeSide() {
+        // Windward and level ground get the smooth lift, no extra turbulence.
+        assertEquals(0.0, WindModel.leeGustBoost(0.5, 2.0), 1e-12);
+        assertEquals(0.0, WindModel.leeGustBoost(0.0, 2.0), 1e-12);
+        // A slope of -1 gives the configured boost in full.
+        assertEquals(2.0, WindModel.leeGustBoost(-1.0, 2.0), 1e-12);
+        // Steeper is clamped, so a one-block cliff cannot run away with it.
+        assertEquals(2.0, WindModel.leeGustBoost(-50.0, 2.0), 1e-12);
+        // A gentle lee slope gives a gentle boost.
+        assertEquals(1.0, WindModel.leeGustBoost(-0.5, 2.0), 1e-12);
+    }
+
+    @Test
+    void leeBoostRoughensTheGusts() {
+        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 50.0, 150, 120, 0.35, 0.3, 0.0);
+        final WindModel.Result calmLee = evaluate(WindModelTest::pressure, WindModelTest::gust,
+                500.0, 250.0, 12.0, BASE, DRY, 0.0, s);
+        final WindModel.Result roughLee = evaluate(WindModelTest::pressure, WindModelTest::gust,
+                500.0, 250.0, 12.0, BASE, DRY, 1.0, s);
+
+        assertFalse(calmLee.capped, "cap must not engage for this test");
+        assertFalse(roughLee.capped, "cap must not engage for this test");
+
+        // Doubling the gust amplitude doubles the gust, and leaves the pressure field alone.
+        assertEquals(calmLee.gust.length() * 2.0, roughLee.gust.length(), 1e-9);
+        assertEquals(calmLee.field.x, roughLee.field.x, 1e-9);
+        assertEquals(calmLee.field.z, roughLee.field.z, 1e-9);
+    }
+
+    @Test
     void gustsStayCappedEvenInAStorm() {
-        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 3.0, 150, 120, 10.0, 0.3);
+        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 3.0, 150, 120, 10.0, 0.3, 0.0);
         final WindModel.Result out = new WindModel.Result();
         for (int i = 0; i < 2000; i++) {
             WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, i * 11.0, i * -7.0, i * 0.5,

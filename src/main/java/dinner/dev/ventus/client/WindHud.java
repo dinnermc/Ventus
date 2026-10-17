@@ -9,8 +9,8 @@ import net.neoforged.neoforge.client.event.RenderGuiEvent;
 
 /**
  * The wind compass HUD: a small dial at the top centre of the screen whose needle points downwind,
- * with the world's N/E/S/W marking the rim so you can read the bearing, plus the speed and heading
- * underneath.
+ * with the world's N/E/S/W marking the rim so you can read the bearing, plus the speed, the vertical
+ * component and the heading underneath.
  *
  * <p>Only ever shows data that arrived from the server via {@link WindSyncState}; with no Ventus on
  * the server, or before the first packet, the HUD stays hidden.
@@ -30,6 +30,9 @@ public final class WindHud {
     private static final int LETTER_RADIUS = 10;
     private static final int NEEDLE_LENGTH = 12;
 
+    /** Vertical wind below this (m/s) is not worth a line of the label. */
+    private static final float VERTICAL_EPSILON = 0.05f;
+
     private static final int DIAL_FILL = 0x96090D13;
     private static final int RIM_COLOR = 0xFF2C3743;
     private static final int LETTER_COLOR = 0xFFD5DDE8;
@@ -47,6 +50,7 @@ public final class WindHud {
         }
 
         final float windX = WindSyncState.x();
+        final float windY = WindSyncState.y();
         final float windZ = WindSyncState.z();
         final double speed = Math.sqrt((double) windX * windX + (double) windZ * windZ);
 
@@ -72,10 +76,8 @@ public final class WindHud {
             drawNeedle(graphics, centerX, (float) Math.atan2(across, along), speedColor(speed));
         }
 
-        final int color = speedColor(speed);
-        graphics.drawCenteredString(minecraft.font,
-                String.format(Locale.ROOT, "%.1f m/s", speed),
-                centerX, CENTER_Y + RADIUS + 5, color);
+        graphics.drawCenteredString(minecraft.font, speedLabel(speed, windY),
+                centerX, CENTER_Y + RADIUS + 5, speedColor(speed));
         graphics.drawCenteredString(minecraft.font,
                 speed > 1.0e-4 ? headingLabel(windX, windZ) : "CALM",
                 centerX, CENTER_Y + RADIUS + 15, LABEL_COLOR);
@@ -107,6 +109,23 @@ public final class WindHud {
         graphics.pose().popPose();
 
         graphics.fill(centerX - 1, CENTER_Y - 1, centerX + 1, CENTER_Y + 1, 0xFFE8EEF6);
+    }
+
+    /**
+     * The speed line: the horizontal wind speed, plus the vertical component once it is worth
+     * showing. Thermals and ridge lift are the whole point of stage 4, and without this a
+     * 3 m/s updraft under a plane would be completely invisible on the HUD.
+     *
+     * <p>The horizontal figure stays the primary one (and keeps the colour scale) because that is
+     * what the dial and the needle describe.
+     */
+    private static String speedLabel(final double horizontalSpeed, final float windY) {
+        final String base = String.format(Locale.ROOT, "%.1f m/s", horizontalSpeed);
+        if (Math.abs(windY) < VERTICAL_EPSILON) {
+            return base;
+        }
+        return base + String.format(Locale.ROOT, windY > 0.0f ? "  \u2191%.1f" : "  \u2193%.1f",
+                Math.abs(windY));
     }
 
     /**

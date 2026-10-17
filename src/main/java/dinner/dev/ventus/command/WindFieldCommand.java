@@ -109,6 +109,8 @@ public final class WindFieldCommand {
                 "[Ventus] sub-level=%s%n"
                         + "  windActive=%s  wind=(%.3f, %.3f, %.3f)%n"
                         + "  heightFactor=%.3f  weather=%.2f  capped=%s%n"
+                        + "  slope=%s  leeBoost=%.2f%n"
+                        + "  thermal=%.3f  orographic=%.3f%n"
                         + "  base=(%.3f, %.3f, %.3f)%n"
                         + "  field=(%.3f, %.3f, %.3f)%n"
                         + "  gust=(%.3f, %.3f, %.3f)%n"
@@ -119,6 +121,9 @@ public final class WindFieldCommand {
                 subLevel.getUniqueId(),
                 windActive, wind.x, wind.y, wind.z,
                 parts.heightFactor, parts.weather, parts.capped,
+                Double.isNaN(parts.slope) ? "n/a" : String.format(Locale.ROOT, "%.3f", parts.slope),
+                parts.leeBoost,
+                parts.thermal, parts.orographic,
                 parts.base.x, parts.base.y, parts.base.z,
                 parts.field.x, parts.field.y, parts.field.z,
                 parts.gust.x, parts.gust.y, parts.gust.z,

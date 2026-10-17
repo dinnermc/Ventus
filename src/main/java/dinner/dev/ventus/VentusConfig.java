@@ -39,6 +39,15 @@ public final class VentusConfig {
     public static final ModConfigSpec.DoubleValue RAIN_MULTIPLIER;
     public static final ModConfigSpec.DoubleValue THUNDER_MULTIPLIER;
 
+    public static final ModConfigSpec.DoubleValue THERMAL_STRENGTH;
+    public static final ModConfigSpec.DoubleValue THERMAL_SCALE;
+    public static final ModConfigSpec.DoubleValue THERMAL_PERIOD;
+    public static final ModConfigSpec.DoubleValue THERMAL_COLD_TEMPERATURE;
+    public static final ModConfigSpec.DoubleValue THERMAL_HOT_TEMPERATURE;
+    public static final ModConfigSpec.DoubleValue SLOPE_PROBE;
+    public static final ModConfigSpec.DoubleValue SLOPE_STRENGTH;
+    public static final ModConfigSpec.DoubleValue LEE_GUST_BOOST;
+
     public static final ModConfigSpec.DoubleValue OVERWORLD_MAGNITUDE;
     public static final ModConfigSpec.DoubleValue OVERWORLD_DIRECTION;
     public static final ModConfigSpec.DoubleValue NETHER_MAGNITUDE;
@@ -120,6 +129,49 @@ public final class VentusConfig {
                         "field by rainMultiplier * thunderMultiplier and dry weather leaves it at 1.0.")
                 .defineInRange("thunderMultiplier", 1.6, 1.0, 10.0);
 
+        THERMAL_STRENGTH = builder
+                .comment("Maximum updraft of a thermal, in m/s, over hot ground in full sun with a clear",
+                        "sky. Real thermals reach 2-6 m/s; 0.0 disables them. The actual value at a point",
+                        "is this multiplied by the sun, the biome's warmth and the dryness, and carved",
+                        "into bubbles by noise, so this is the ceiling rather than a typical reading.")
+                .defineInRange("thermalStrength", 2.5, 0.0, 20.0);
+
+        THERMAL_SCALE = builder
+                .comment("Map scale (blocks) of the thermal bubbles: how far apart they are.")
+                .defineInRange("thermalScale", 200.0, 20.0, 10000.0);
+
+        THERMAL_PERIOD = builder
+                .comment("Seconds for the thermal bubbles to drift and evolve.")
+                .defineInRange("thermalPeriod", 90.0, 5.0, 86400.0);
+
+        THERMAL_COLD_TEMPERATURE = builder
+                .comment("Biome base temperature at or below which there are no thermals at all.",
+                        "Vanilla ranges roughly 0.2 (snowy) to 2.0 (desert, badlands, jungle);",
+                        "0.8 keeps temperate biomes out of it.")
+                .defineInRange("thermalColdTemperature", 0.8, -2.0, 30.0);
+
+        THERMAL_HOT_TEMPERATURE = builder
+                .comment("Biome base temperature at which thermals reach their full strength.")
+                .defineInRange("thermalHotTemperature", 2.0, -2.0, 30.0);
+
+        SLOPE_PROBE = builder
+                .comment("How far upwind and downwind the terrain is sampled to measure its slope, in",
+                        "blocks. Larger values smooth blocky cliffs away; smaller values react to local",
+                        "terrain but can read a single-block step as a cliff.")
+                .defineInRange("slopeProbe", 16.0, 1.0, 256.0);
+
+        SLOPE_STRENGTH = builder
+                .comment("Multiplier on the physical orographic lift: air moving at V over ground rising",
+                        "at slope s climbs at V * s, so 1.0 is the real thing. Below 1 tames Minecraft's",
+                        "vertical cliffs, above 1 exaggerates them. Negative slopes give downdraft.")
+                .defineInRange("slopeStrength", 0.5, -5.0, 5.0);
+
+        LEE_GUST_BOOST = builder
+                .comment("Extra gust amplitude behind a ridge, as a fraction of the base gust, at a slope",
+                        "of -1 or steeper (0 = none). Windward ground is smooth lift and gets nothing.",
+                        "1.0 doubles the gusts on the lee side.")
+                .defineInRange("leeGustBoost", 1.0, 0.0, 10.0);
+
         builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
                         "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
                 .push("dimensions");
@@ -182,6 +234,46 @@ public final class VentusConfig {
         return THUNDER_MULTIPLIER.get();
     }
 
+    /** @return the ceiling of a thermal updraft, in m/s (0 disables thermals) */
+    public static double thermalStrength() {
+        return THERMAL_STRENGTH.get();
+    }
+
+    /** @return the map scale (blocks) of the thermal bubbles */
+    public static double thermalScale() {
+        return THERMAL_SCALE.get();
+    }
+
+    /** @return seconds for the thermal bubbles to drift and evolve */
+    public static double thermalPeriod() {
+        return THERMAL_PERIOD.get();
+    }
+
+    /** @return the biome temperature at or below which there are no thermals */
+    public static double thermalColdTemperature() {
+        return THERMAL_COLD_TEMPERATURE.get();
+    }
+
+    /** @return the biome temperature at which thermals reach full strength */
+    public static double thermalHotTemperature() {
+        return THERMAL_HOT_TEMPERATURE.get();
+    }
+
+    /** @return blocks either side of a point used to measure the terrain slope */
+    public static double slopeProbe() {
+        return SLOPE_PROBE.get();
+    }
+
+    /** @return the multiplier on the physical orographic lift */
+    public static double slopeStrength() {
+        return SLOPE_STRENGTH.get();
+    }
+
+    /** @return the extra gust amplitude behind a ridge, as a fraction of the base gust */
+    public static double leeGustBoost() {
+        return LEE_GUST_BOOST.get();
+    }
+
     /**
      * @return the stage-2 model inputs, read fresh from the (hot-reloadable) config on every call
      */
@@ -194,7 +286,8 @@ public final class VentusConfig {
                 GUST_SCALE.get(),
                 GUST_PERIOD.get(),
                 GUST_AMPLITUDE.get(),
-                GUST_LATERAL_FRACTION.get());
+                GUST_LATERAL_FRACTION.get(),
+                LEE_GUST_BOOST.get());
     }
 
     /**

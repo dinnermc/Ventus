@@ -35,6 +35,12 @@ import org.joml.Vector3dc;
  * <b>Weather (stage 3).</b> A scalar {@code weather} multiplier (rain, then thunder) is applied to the
  * field and the gusts but never to the base wind, so a storm makes the air rougher without shifting
  * the prevailing direction or its average strength.
+ * <p>
+ * <b>Vertical air (stage 4).</b> Thermals and orographic lift are <em>not</em> part of the pressure
+ * potential: they are driven by the sun, the biome and the shape of the ground, so they are computed
+ * from world terms that {@link WindField} supplies as plain scalars, using the pure functions
+ * {@link #thermal} and {@link #orographic}. The leeward side of a slope also roughens the gusts, which
+ * is the one stage-4 term that reaches back into this class ({@code leeBoost}).
  */
 public final class WindModel {
     private WindModel() {
@@ -78,9 +84,11 @@ public final class WindModel {
      * @param gustPeriod           seconds for a gust to build and fade
      * @param gustAmplitude        gust strength as a fraction of the base wind
      * @param gustLateralFraction  how much of the gust pushes sideways (0 = purely along the wind)
+     * @param leeGustBoost         extra gust amplitude on the lee side of a slope, at slope -1 (0 = off)
      */
     public record Settings(double fieldScale, double fieldPeriod, double strength, double maxMultiplier,
-            double gustScale, double gustPeriod, double gustAmplitude, double gustLateralFraction) {
+            double gustScale, double gustPeriod, double gustAmplitude, double gustLateralFraction,
+            double leeGustBoost) {
     }
 
     /**
@@ -137,6 +145,72 @@ public final class WindModel {
     }
 
     /**
+     * The upward speed of a thermal at one point, in blocks/second.
+     *
+     * <p>A thermal is surface heating made visible: it needs sun ({@code daylight}), ground worth
+     * heating ({@code warmth}) and an overcast-free sky ({@code dryness}). The noise carves the
+     * rising air into <em>bubbles</em> — only its positive half lifts, so between thermals the air is
+     * simply still rather than sinking, which is what makes them worth circling.
+     *
+     * <p>Every factor is a plain {@code [0, 1]} scalar supplied by {@link WindField}, so this is a
+     * product of four numbers and cannot produce a NaN or an overshoot. The noise is clamped into
+     * {@code [0, 1]} first, so {@code strength} really is the ceiling even if a noise sample wanders
+     * outside its nominal range.
+     *
+     * @param noise       thermal-bubble noise, nominally in {@code [-1, 1]}
+     * @param daylight    how far past dawn and short of dusk the sun is, in {@code [0, 1]}
+     * @param warmth      how hot the biome is, in {@code [0, 1]}
+     * @param dryness     {@code 1 - rainLevel}: an overcast sky has no thermals
+     * @param strength    the configured maximum updraft, in blocks/second
+     * @return the updraft, {@code >= 0} and {@code <= strength}
+     */
+    public static double thermal(final double noise, final double daylight, final double warmth,
+            final double dryness, final double strength) {
+        final double bubble = Math.min(1.0, Math.max(0.0, noise));
+        return strength * daylight * warmth * dryness * bubble;
+    }
+
+    /**
+     * The vertical speed the terrain forces on the air, in blocks/second: the <b>orographic</b> term.
+     *
+     * <p>Air that moves horizontally at {@code horizontalSpeed} over ground rising at {@code slope}
+     * (rise over run, so {@code 1.0} is a 45&deg; slope) is itself climbing at
+     * {@code horizontalSpeed * slope}. That is ridge lift on a windward face and, with a negative
+     * slope, the sink behind the ridge — the same term, signed.
+     *
+     * <p>{@code strength} scales the physical value; {@code 1.0} is the real thing, lower values tame
+     * Minecraft's blocky cliffs, higher ones exaggerate them.
+     *
+     * @param horizontalSpeed the wind speed in the XZ plane, blocks/second
+     * @param slope           rise over run of the terrain along the wind direction (positive = the
+     *                        wind is climbing, negative = it is descending)
+     * @param strength        the configured multiplier
+     * @return the vertical air speed, positive up
+     */
+    public static double orographic(final double horizontalSpeed, final double slope, final double strength) {
+        return horizontalSpeed * slope * strength;
+    }
+
+    /**
+     * How much extra gust amplitude the lee side of a slope gets, as a fraction of the base gust
+     * amplitude ({@code 0} = none).
+     *
+     * <p>Only a descending slope produces the extra turbulence: the air has just poured over a ridge
+     * and is tumbling. A windward slope ({@code slope >= 0}) is smooth lift and gets nothing. The
+     * result is clamped so an over-steep cliff cannot run away.
+     *
+     * @param slope rise over run of the terrain along the wind direction
+     * @param boost the configured maximum, at a slope of {@code -1} or steeper
+     * @return the multiplier to add to 1 when scaling the gusts
+     */
+    public static double leeGustBoost(final double slope, final double boost) {
+        if (slope >= 0.0) {
+            return 0.0;
+        }
+        return boost * Math.min(1.0, -slope);
+    }
+
+    /**
      * Evaluates the field at a point and time.
      *
      * @param pressure    the pressure potential
@@ -153,6 +227,29 @@ public final class WindModel {
      */
     public static Result evaluate(final Noise3 pressure, final Noise3 gust, final double x, final double z,
             final double timeSeconds, final Vector3dc base, final double weather,
+            final Settings settings, final Result out) {
+        return evaluate(pressure, gust, x, z, timeSeconds, base, weather, 0.0, settings, out);
+    }
+
+    /**
+     * Evaluates the field at a point and time, with the leeward gust boost from stage 4.
+     *
+     * @param pressure    the pressure potential
+     * @param gust        the gust noise, or {@code null} to disable gusts
+     * @param x           world X (blocks)
+     * @param z           world Z (blocks)
+     * @param timeSeconds world game time in seconds ({@code level.getGameTime() / 20.0})
+     * @param base        the dimension's base wind (horizontal; its Y is ignored)
+     * @param weather     rain/storm scaling applied to the perturbations only (1 = no weather);
+     *                    the base wind is never scaled by it
+     * @param leeBoost    extra gust amplitude as a fraction of the base gust, from
+     *                    {@link #leeGustBoost}; 0 on level or windward ground
+     * @param settings    the tunable inputs
+     * @param out         the result to fill (reused)
+     * @return {@code out}
+     */
+    public static Result evaluate(final Noise3 pressure, final Noise3 gust, final double x, final double z,
+            final double timeSeconds, final Vector3dc base, final double weather, final double leeBoost,
             final Settings settings, final Result out) {
         out.reset();
 
@@ -185,7 +282,7 @@ public final class WindModel {
                 final double ngt = timeSeconds / settings.gustPeriod();
                 final double along = gust.at(ngx, ngz, ngt);
                 final double across = gust.at(ngx + GUST_LATERAL_OFFSET_X, ngz + GUST_LATERAL_OFFSET_Z, ngt);
-                final double amp = settings.gustAmplitude() * baseMag * weather;
+                final double amp = settings.gustAmplitude() * baseMag * weather * (1.0 + leeBoost);
                 final double lateral = settings.gustLateralFraction() * across;
                 out.gust.set((dirX * along - dirZ * lateral) * amp, 0.0, (dirZ * along + dirX * lateral) * amp);
                 out.total.add(out.gust);

@@ -19,6 +19,8 @@ sub-level, then read by the physics hooks (`ServerSubLevelWindMixin`). It is bui
 | Pressure field | config: `fieldScale`, `fieldPeriod`, `fieldStrength` | A 3D-simplex pressure potential `P(x/L, z/L, t/T)`; its gradient rotated 90° in the XZ plane deflects the base wind so the prevailing direction still dominates but the wind turns and varies across `fieldScale` (1500) blocks and `fieldPeriod` (1200 s). `fieldStrength` scales it (1 = typical deflection equals the base wind). |
 | Gusts | config: `gustScale`, `gustPeriod`, `gustAmplitude`, `gustLateralFraction` | A second, shorter-wavelength noise that puffs mostly **along** the wind (with a small lateral fraction), at `gustAmplitude` (35%) of the base wind, over `gustScale` (150) blocks and `gustPeriod` (120 s). |
 | Weather | config: `rainMultiplier`, `thunderMultiplier` | The field and the gusts are scaled by the dimension's **rain and thunder levels**, which vanilla fades in and out over ~5 s: `1 + (rainMultiplier − 1) × rainLevel`, then `1 + (thunderMultiplier − 1) × thunderLevel` on top (1.5 × 1.6 = **2.4** at full storm). Using the continuous levels rather than the raining/thundering flags means no step at the threshold and no per-position biome, heightmap or chunk lookup. The **base wind is not scaled** — weather roughens the air without moving the prevailing direction. |
+| Thermals | config: `thermalStrength`, `thermalScale`, `thermalPeriod`, `thermalColdTemperature`, `thermalHotTemperature` | An **updraft** of up to `thermalStrength` (2.5 m/s) over hot ground in full sun, carved into **bubbles** by its own noise over `thermalScale` (200) blocks and `thermalPeriod` (90 s). Only the positive half of the noise lifts, so the air between bubbles is still rather than sinking. The four gates multiply: sun (dawn and dusk ramp over 1500 ticks each), biome warmth from the biome's base temperature (`thermalColdTemperature` 0.8 → no thermals, `thermalHotTemperature` 2.0 → full strength, so deserts and badlands peak and temperate biomes stay out) and dryness (`1 − rainLevel`, since an overcast sky has no convection). |
+| Orographic lift | config: `slopeProbe`, `slopeStrength`, `leeGustBoost` | Air moving at `V` over ground rising at slope `s` climbs at **`V × s`** — ridge lift on a windward face, and the **sink** behind the ridge, since the same signed term covers both. The slope is the `OCEAN_FLOOR` height difference between two columns `slopeProbe` (16) blocks either side of the point **along the base wind**, clamped to a 45° slope. On the lee side the gusts are also multiplied by `1 + leeGustBoost` (2× at a 45° lee slope), which is what makes flying near mountains dangerous. The biome lookup is cached by biome id, so it costs a hash lookup after the first time. |
 | Height profile | config: `fadeHeight`, `surfaceCalm` | Wind ramps with altitude above the terrain: `surfaceCalm` (10%) at the surface to full at `fadeHeight` (32 blocks), smoothstep in between. Uses vanilla `OCEAN_FLOOR` heightmap (solid blocks; **water ignored**, **leaves count as terrain**), so a boat floating on the sea sits above its reference and still catches the wind, while a plane parked on the ground feels almost nothing. A **submerged** sample point (centre block holds a fluid) gets **zero** wind. |
 | Fade-in | `WindField` | 0 to full over **5 seconds** after a sub-level's first sample, so nothing jolts on world load or when a sub-level enters a windy region. |
 | Cap | config: `maxWindMultiplier` | The total never exceeds this multiple (**3×**) of the dimension's base wind magnitude, so an extreme noise value or bad parameter can never produce an absurd wind. |
@@ -50,6 +52,14 @@ gustAmplitude = 0.35
 gustLateralFraction = 0.3
 rainMultiplier = 1.5
 thunderMultiplier = 1.6
+thermalStrength = 2.5
+thermalScale = 200.0
+thermalPeriod = 90.0
+thermalColdTemperature = 0.8
+thermalHotTemperature = 2.0
+slopeProbe = 16.0
+slopeStrength = 0.5
+leeGustBoost = 1.0
 
 [dimensions.overworld]
     magnitude = 3.0
@@ -89,7 +99,10 @@ A small circular compass sits at the **top centre of the HUD**:
   compass (north is red);
 - the **needle points downwind**, and its colour tracks the speed (grey → cyan → amber → red);
 - underneath it shows the speed (e.g. `3.2 m/s`) and the heading the wind is blowing **towards**
-  (e.g. `090° E`), or `CALM` when there is none.
+  (e.g. `090° E`), or `CALM` when there is none;
+- once there is a meaningful **vertical** component the speed line grows an up/down marker
+  (`3.2 m/s ↑2.3`), so a thermal or ridge lift is visible without leaving the cockpit. The speed
+  figure itself stays horizontal, because that is what the needle and the dial describe.
 
 **F8** shows/hides it (rebindable under *Options → Controls → Ventus*; it starts visible, and the
 toggle does not persist between sessions).
@@ -155,6 +168,24 @@ Stage 3 checks:
 3. **Indoors is not a shelter (3)** — the weather is global to the dimension, so a closed hangar
    reports the same `weather` as open sky; only changing dimension (Nether/End, whose rain level is
    always 0) brings it back to `1.00`.
+
+Stage 4 checks:
+
+1. **Thermals need sun (4)** — `/time set noon` over a desert, then compare `/windfield info` in the
+   open against `/time set midnight`: `thermal` should be a positive `total.y` by day and exactly
+   `0.000` at night. Dawn and dusk must ramp over ~75 s each rather than switch.
+2. **Thermals need heat (4)** — the same desert versus a snowy biome at noon: the desert `thermal`
+   should be at the ceiling (`thermalStrength`), the snowy one exactly `0.000`.
+3. **Thermals are bubbles (4)** — hold altitude over a desert: `thermal` should rise and fall as you
+   drift through them, not sit at a constant value. Circling a strong one should hold you up.
+4. **Rain kills thermals (4)** — `/weather rain` over the desert at noon → `thermal` eases to `0.000`
+   while the horizontal wind stays up (it is only convection that needs the sun).
+5. **Ridge lift (4)** — fly straight at a hill face-on: `orographic` should go positive (`wind.y`
+   positive, you feel yourself rise) and `slope` should read positive.
+6. **Sink and rough air behind the ridge (4)** — cross the crest: `orographic` flips negative,
+   `leeBoost` becomes non-zero and the gusts visibly roughen. That is the dangerous side, on purpose.
+7. **A wall is not a launch pad (4)** — fly at a sheer cliff: `slope` clamps at `1.000` and
+   `orographic` saturates instead of producing an absurd updraft.
 
 Client checks:
 
