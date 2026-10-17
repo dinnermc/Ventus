@@ -149,15 +149,49 @@ public final class WindField {
      * and out with the day instead of switching on at sunrise.
      *
      * <p>Uses the level's own day clock, so {@code /time set} produces a ramp rather than a jump.
+     * Multiplied by {@link #skyAt}, so a point under a roof, or in a dimension with no sky light,
+     * gets no thermal whatever the clock says.
      */
-    private static double daylightAt(final ServerLevel level) {
+    private static double daylightAt(final ServerLevel level, final Vector3dc worldPos) {
         final long dayTime = Math.floorMod(level.getDayTime(), 24000L);
         if (dayTime >= 12000L) {
             return 0.0;
         }
 
-        return smoothstep(dayTime / (double) TWILIGHT_TICKS)
+        final double sun = smoothstep(dayTime / (double) TWILIGHT_TICKS)
                 * smoothstep((12000L - dayTime) / (double) TWILIGHT_TICKS);
+        return sun * skyAt(level, worldPos);
+    }
+
+    /**
+     * How much of the sun actually reaches a point, in {@code [0, 1]}. Zero in a dimension without
+     * sky light (the Nether never gets thermals), and ramping in over
+     * {@link VentusConfig#thermalSkyClearance()} blocks of clearance above
+     * {@link Heightmap.Types#WORLD_SURFACE}, so flying into a hangar eases the thermal off instead
+     * of cutting it. WORLD_SURFACE counts leaves, so a forest canopy shades the air under it exactly
+     * as a roof does.
+     *
+     * <p>Requires the column's chunk to be loaded; an unknown column gets no sun rather than loading
+     * it.
+     */
+    private static double skyAt(final ServerLevel level, final Vector3dc worldPos) {
+        if (!level.dimensionType().hasSkyLight()) {
+            return 0.0;
+        }
+
+        final int x = Mth.floor(worldPos.x());
+        final int z = Mth.floor(worldPos.z());
+        final LevelChunk chunk = level.getChunkSource().getChunkNow(x >> 4, z >> 4);
+        if (chunk == null) {
+            return 0.0;
+        }
+
+        final double ceiling = chunk.getHeight(Heightmap.Types.WORLD_SURFACE, x & 15, z & 15);
+        final double clearance = VentusConfig.thermalSkyClearance();
+        if (clearance <= 0.0) {
+            return worldPos.y() >= ceiling ? 1.0 : 0.0;
+        }
+        return smoothstep((worldPos.y() - ceiling) / clearance);
     }
 
     /**
@@ -247,10 +281,12 @@ public final class WindField {
      * @param worldPos        the sample point
      * @param horizontalSpeed the XZ wind speed, which is what drives orographic lift
      * @param slope           the terrain slope along the base wind, or {@code NaN} if unknown
+     * @param decay           {@link WindModel#heightDecay} at this altitude, applied to the orographic
+     *                        term only — a thermal exists because it rose, a ridge only lifts beside itself
      * @param out             the terms to fill (reused)
      */
     private static void verticalAt(final NoiseSet noise, final ServerLevel level, final Vector3dc worldPos,
-            final double horizontalSpeed, final double slope, final Vertical out) {
+            final double horizontalSpeed, final double slope, final double decay, final Vertical out) {
         out.thermal = 0.0;
         out.orographic = 0.0;
 
@@ -261,13 +297,13 @@ public final class WindField {
                     worldPos.x() / VentusConfig.thermalScale(), worldPos.z() / VentusConfig.thermalScale(), nt);
             final BlockPos pos = new BlockPos(Mth.floor(worldPos.x()), Mth.floor(worldPos.y()),
                     Mth.floor(worldPos.z()));
-            out.thermal = WindModel.thermal(bubble, daylightAt(level), warmthAt(level, pos),
+            out.thermal = WindModel.thermal(bubble, daylightAt(level, worldPos), warmthAt(level, pos),
                     1.0 - level.getRainLevel(1.0F), thermalStrength);
         }
 
         final double slopeStrength = VentusConfig.slopeStrength();
         if (slopeStrength > 0.0 && !Double.isNaN(slope)) {
-            out.orographic = WindModel.orographic(horizontalSpeed, slope, slopeStrength);
+            out.orographic = WindModel.orographic(horizontalSpeed, slope, slopeStrength) * decay;
         }
     }
 
@@ -324,21 +360,67 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
 
-        // base wind + pressure field + gusts (scaled by weather), then the vertical terms, then the
-        // height profile, the fade-in and windScale. The slope is measured along the base wind, which
-        // is still in dest at this point.
+        // The dimension's base wind is still in dest here: its magnitude is the budget the final
+        // clamp works from, and its direction is what the terrain slope is measured along.
+        final double baseMag = dest.length();
+        final double windScale = VentusConfig.windScale();
+        final double entry = entryRamp(level, carrier);
+
         final NoiseSet noise = noiseSet(level);
         final WindModel.Settings settings = VentusConfig.windModelSettings();
+
+        // Both terrain-locked terms die out with altitude: a ridge lifts the air beside it, not an
+        // aircraft crossing the range far above the crest. Thermals are not decayed, because a
+        // thermal exists precisely because it rose.
+        final double terrain = terrainAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
+        final double decay = Double.isNaN(terrain)
+                ? 1.0 : WindModel.heightDecay(worldPos.y() - terrain, VentusConfig.slopeHeightFalloff());
+
         final double slope = slopeAlongWind(level, worldPos, dest.x(), dest.z());
-        final double leeBoost = Double.isNaN(slope) ? 0.0 : WindModel.leeGustBoost(slope, settings.leeGustBoost());
+        final double leeBoost = Double.isNaN(slope)
+                ? 0.0 : WindModel.leeGustBoost(slope, settings.leeGustBoost()) * decay;
 
         WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
                 level.getGameTime() / 20.0, dest, weatherMultiplier(level), leeBoost, settings, MODEL_RESULT);
 
-        dest.set(MODEL_RESULT.total);
-        verticalAt(noise, level, worldPos, Math.hypot(dest.x, dest.z), slope, VERTICAL);
-        dest.y = VERTICAL.total();
-        dest.mul(fade * entryRamp(level, carrier) * VentusConfig.windScale());
+        verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z),
+                slope, decay, VERTICAL);
+
+        // Ease the two terrain-derived terms towards their target: both are read from integer
+        // terrain heights, so without this they would step as the sampled columns change. Gusts are
+        // deliberately left alone, because they are meant to be quick.
+        final double vertical = WindModel.approach(carrier.ventus$vertical(), VERTICAL.total(),
+                VentusConfig.verticalSmoothSeconds(), 1.0 / 20.0);
+        carrier.ventus$setVertical(vertical);
+
+        dest.set(MODEL_RESULT.total).mul(fade * entry * windScale);
+        dest.y = vertical * entry * windScale;
+
+        clampToBudget(dest, baseMag);
+    }
+
+    /**
+     * The last thing before a wind is stored: guarantee it is finite, then keep its magnitude within
+     * {@code maxWindMultiplier} times the dimension's base wind (and {@code windScale}).
+     *
+     * <p>Every term is bounded on its own, but they now <em>sum</em> — base, pressure field, gusts
+     * (roughened by rain and by the lee side), the thermal and the orographic term, all multiplied by
+     * the height profile, the fade-in and {@code windScale}. With the defaults the horizontal already
+     * caps at 3 &times; 3 = 9 m/s and the two vertical terms reach at most 2.5 + 9 &times; 0.5 = 7 m/s,
+     * so the whole vector tops out near 11.4 m/s before this clamp. This is the safety net for that
+     * sum, and the guard against a NaN ever reaching a rigid body.
+     */
+    private static void clampToBudget(final Vector3d wind, final double baseMag) {
+        if (!Double.isFinite(wind.x) || !Double.isFinite(wind.y) || !Double.isFinite(wind.z)) {
+            wind.set(0.0, 0.0, 0.0);
+            return;
+        }
+
+        final double cap = VentusConfig.maxWindMultiplier() * baseMag * VentusConfig.windScale();
+        final double mag2 = wind.lengthSquared();
+        if (mag2 > cap * cap) {
+            wind.mul(cap / Math.sqrt(mag2));
+        }
     }
 
     /**
@@ -385,31 +467,41 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, 1.0);
         dest.heightFactor = fade;
 
+        // The base wind is in dest.base here; its magnitude is the budget the clamp works from.
+        final double baseMag = dest.base.length();
+        final double windScale = VentusConfig.windScale();
+
         final NoiseSet noise = noiseSet(level);
         final double weather = weatherMultiplier(level);
         dest.weather = weather;
 
         final WindModel.Settings settings = VentusConfig.windModelSettings();
+        final double terrain = terrainAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
+        final double decay = Double.isNaN(terrain)
+                ? 1.0 : WindModel.heightDecay(worldPos.y() - terrain, VentusConfig.slopeHeightFalloff());
+
         final double slope = slopeAlongWind(level, worldPos, dest.base.x(), dest.base.z());
         dest.slope = slope;
-        final double leeBoost = Double.isNaN(slope) ? 0.0 : WindModel.leeGustBoost(slope, settings.leeGustBoost());
+        final double leeBoost = Double.isNaN(slope)
+                ? 0.0 : WindModel.leeGustBoost(slope, settings.leeGustBoost()) * decay;
         dest.leeBoost = leeBoost;
 
         WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
                 level.getGameTime() / 20.0, dest.base, weather, leeBoost, settings, MODEL_RESULT);
 
-        verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z), slope,
-                VERTICAL);
+        verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z),
+                slope, decay, VERTICAL);
         dest.thermal = VERTICAL.thermal;
         dest.orographic = VERTICAL.orographic;
 
-        final double scale = fade * VentusConfig.windScale();
+        final double scale = fade * windScale;
         dest.base.mul(scale);
         dest.field.set(MODEL_RESULT.field).mul(scale);
         dest.gust.set(MODEL_RESULT.gust).mul(scale);
         dest.total.set(MODEL_RESULT.total).mul(scale);
         dest.total.y = (dest.thermal + dest.orographic) * scale;
         dest.capped = MODEL_RESULT.capped;
+        clampToBudget(dest.total, baseMag);
         return dest;
     }
 

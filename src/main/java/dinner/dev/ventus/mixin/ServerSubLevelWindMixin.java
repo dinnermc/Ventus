@@ -80,6 +80,9 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     @Unique
     private Long ventus$firstSample;
 
+    @Unique
+    private double ventus$vertical;
+
     @Override
     public Vector3d ventus$wind() {
         if (this.ventus$wind == null) {
@@ -106,6 +109,16 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     @Override
     public void ventus$setFirstSample(final Long gameTime) {
         this.ventus$firstSample = gameTime;
+    }
+
+    @Override
+    public double ventus$vertical() {
+        return this.ventus$vertical;
+    }
+
+    @Override
+    public void ventus$setVertical(final double vertical) {
+        this.ventus$vertical = vertical;
     }
 
     private static boolean ventus$debugDue(final int slot) {

@@ -202,6 +202,69 @@ class WindModelTest {
     }
 
     @Test
+    void heightDecayKillsTheRidgeLiftWithAltitude() {
+        // Full strength at the ground, one e-fold at the configured falloff, and nothing much above.
+        assertEquals(1.0, WindModel.heightDecay(0.0, 50.0), 1e-12);
+        assertEquals(Math.exp(-1.0), WindModel.heightDecay(50.0, 50.0), 1e-12);
+        assertEquals(0.0, WindModel.heightDecay(2000.0, 50.0), 1e-12);
+
+        // Strictly decreasing: a plane above the ridge always feels less than one below it.
+        double previous = 1.0;
+        for (double height = 10.0; height <= 500.0; height += 10.0) {
+            final double decay = WindModel.heightDecay(height, 50.0);
+            assertTrue(decay < previous, "decay must keep falling with altitude, at " + height);
+            previous = decay;
+        }
+
+        // A negative falloff turns the decay off rather than producing a NaN or a blow-up.
+        assertEquals(1.0, WindModel.heightDecay(100.0, 0.0), 1e-12);
+        assertEquals(1.0, WindModel.heightDecay(100.0, -5.0), 1e-12);
+        // Below ground the effect is at full strength, not inverted.
+        assertEquals(1.0, WindModel.heightDecay(-20.0, 50.0), 1e-12);
+    }
+
+    @Test
+    void approachEasesInsteadOfStepping() {
+        // The terrain-derived terms are read from integer heights, so they step; this must not.
+        final double target = 3.0;
+        double value = 0.0;
+        double previous = 0.0;
+        for (int tick = 0; tick < 300; tick++) {
+            value = WindModel.approach(value, target, 1.5, 1.0 / 20.0);
+            assertTrue(value >= previous, "must never overshoot backwards");
+            assertTrue(value <= target, "must never overshoot the target");
+            previous = value;
+        }
+        // After fifteen seconds — ten time constants — the gap left is exactly e^-10 of the original,
+        // which checks the time constant is honoured rather than merely "nearly there".
+        assertEquals(3.0 - 3.0 * Math.exp(-10.0), value, 1e-9);
+
+        // A zero time constant is a pass-through, for tuning it out.
+        assertEquals(target, WindModel.approach(0.0, target, 0.0, 1.0 / 20.0), 1e-12);
+
+        // The first step is a small fraction, never a jump to the target.
+        final double first = WindModel.approach(0.0, target, 1.5, 1.0 / 20.0);
+        assertTrue(first > 0.0 && first < target * 0.1, "first step was " + first);
+    }
+
+    @Test
+    void extremeTermsNeverLeaveTheBudget() {
+        // The red safety net: whatever the parameters and the noise do, the horizontal total stays
+        // within the cap. Every term that can be turned up to an absurd value is turned up here.
+        final WindModel.Noise3 wild = (x, y, z) -> 1.0e6;
+        final WindModel.Settings s = new WindModel.Settings(1e-9, 1e-9, 1e6, 3.0, 1e-9, 1e-9, 1e6, 1.0, 1e6);
+        final Vector3d hugeBase = new Vector3d(1.0e6, 0.0, 1.0e6);
+        final WindModel.Result out = new WindModel.Result();
+
+        for (int i = 0; i < 2000; i++) {
+            WindModel.evaluate(wild, wild, i * 1e5, i * -1e5, i * 1e3, hugeBase, 1.0e6, 1.0e6, s, out);
+            assertTrue(out.capped, "expected the cap to engage at " + i);
+            assertTrue(out.total.length() <= 3.0 * hugeBase.length() + 1e-6, "escaped the budget at " + i);
+            assertTrue(Double.isFinite(out.total.x) && Double.isFinite(out.total.z), "NaN at " + i);
+        }
+    }
+
+    @Test
     void gustsStayCappedEvenInAStorm() {
         final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 3.0, 150, 120, 10.0, 0.3, 0.0);
         final WindModel.Result out = new WindModel.Result();

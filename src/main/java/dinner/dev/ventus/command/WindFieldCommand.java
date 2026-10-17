@@ -30,6 +30,11 @@ import java.util.Locale;
  * <p>
  * {@code /windfield info <pos>} does the same for the sub-level containing {@code pos}. This variant
  * needs no player, so it is usable from a dedicated server console or RCON.
+ * <p>
+ * When there is no sub-level at the sampled position the command still reports the field itself —
+ * base, field, gust, height factor, slope, thermal and orographic — because those are properties of
+ * the position. That makes it usable to walk or fly around sampling biomes and slopes without being
+ * aboard anything.
  */
 public final class WindFieldCommand {
     private WindFieldCommand() {
@@ -70,9 +75,16 @@ public final class WindFieldCommand {
     }
 
     private static int report(final CommandSourceStack source, final ServerLevel level, final Vector3d worldPos, final SubLevel subLevel) {
+        // The steady-state breakdown of the field at the sample point (base / field / height / total).
+        final WindField.Breakdown parts = WindField.breakdown(level, worldPos, new WindField.Breakdown());
+
         if (subLevel == null) {
-            source.sendFailure(Component.literal("[Ventus] No Sable sub-level found at the sampled position."));
-            return 0;
+            // The field itself is a property of the position, not of a sub-level, so it is still
+            // worth reporting. This makes the command usable to walk or fly around sampling biomes
+            // and slopes without needing to be aboard anything.
+            source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                    "[Ventus] (no sub-level at the sampled position)%n%s", fieldLines(parts))), false);
+            return 1;
         }
 
         // The wind Sable actually sees for this sub-level: the per-tick sample stored on the
@@ -84,9 +96,6 @@ public final class WindFieldCommand {
             wind = WindField.sampleAt(level, worldPos, new Vector3d());
         }
         final boolean windActive = wind.lengthSquared() != 0.0;
-
-        // The steady-state breakdown of the field at the sample point (base / field / height / total).
-        final WindField.Breakdown parts = WindField.breakdown(level, worldPos, new WindField.Breakdown());
 
         // The two inputs the d*w impulse needs: a positive drag coefficient and a positive mass.
         final double universalDrag = DimensionPhysicsData.getUniversalDrag(level);
@@ -108,18 +117,29 @@ public final class WindFieldCommand {
         source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
                 "[Ventus] sub-level=%s%n"
                         + "  windActive=%s  wind=(%.3f, %.3f, %.3f)%n"
-                        + "  heightFactor=%.3f  weather=%.2f  capped=%s%n"
-                        + "  slope=%s  leeBoost=%.2f%n"
-                        + "  thermal=%.3f  orographic=%.3f%n"
-                        + "  base=(%.3f, %.3f, %.3f)%n"
-                        + "  field=(%.3f, %.3f, %.3f)%n"
-                        + "  gust=(%.3f, %.3f, %.3f)%n"
-                        + "  total=(%.3f, %.3f, %.3f)%n"
+                        + "%s%n"
                         + "  universalDrag=%.3f  mass=%s%n"
                         + "  subLevelVel=(%.3f, %.3f, %.3f)%n"
                         + "  air-relative=(%.3f, %.3f, %.3f)",
                 subLevel.getUniqueId(),
                 windActive, wind.x, wind.y, wind.z,
+                fieldLines(parts),
+                universalDrag, massText,
+                subLevelVelocity.x, subLevelVelocity.y, subLevelVelocity.z,
+                relativeVelocity.x, relativeVelocity.y, relativeVelocity.z)), false);
+        return 1;
+    }
+
+    /** The position-dependent part of the report, shared by the with- and without-sub-level paths. */
+    private static String fieldLines(final WindField.Breakdown parts) {
+        return String.format(Locale.ROOT,
+                "  heightFactor=%.3f  weather=%.2f  capped=%s%n"
+                        + "  slope=%s  leeBoost=%.2f%n"
+                        + "  thermal=%.3f  orographic=%.3f%n"
+                        + "  base=(%.3f, %.3f, %.3f)%n"
+                        + "  field=(%.3f, %.3f, %.3f)%n"
+                        + "  gust=(%.3f, %.3f, %.3f)%n"
+                        + "  total=(%.3f, %.3f, %.3f)",
                 parts.heightFactor, parts.weather, parts.capped,
                 Double.isNaN(parts.slope) ? "n/a" : String.format(Locale.ROOT, "%.3f", parts.slope),
                 parts.leeBoost,
@@ -127,10 +147,6 @@ public final class WindFieldCommand {
                 parts.base.x, parts.base.y, parts.base.z,
                 parts.field.x, parts.field.y, parts.field.z,
                 parts.gust.x, parts.gust.y, parts.gust.z,
-                parts.total.x, parts.total.y, parts.total.z,
-                universalDrag, massText,
-                subLevelVelocity.x, subLevelVelocity.y, subLevelVelocity.z,
-                relativeVelocity.x, relativeVelocity.y, relativeVelocity.z)), false);
-        return 1;
+                parts.total.x, parts.total.y, parts.total.z);
     }
 }

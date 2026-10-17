@@ -17,7 +17,10 @@ import org.joml.Vector3d;
  *     known, so a sub-level whose chunk is not loaded keeps its previous factor instead of jumping
  *     to full wind;</li>
  *     <li>{@link #ventus$firstSample()} — game time of the first sample, or {@code null} while
- *     unsampled, driving the temporal fade-in.</li>
+ *     unsampled, driving the temporal fade-in;</li>
+ *     <li>{@link #ventus$vertical()} — the smoothed stage-4 vertical wind (thermal + orographic),
+ *     {@code 0} until first sampled. Smoothed rather than raw because both terms are derived from
+ *     integer terrain heights, which would otherwise make the updraft step as the columns are read.</li>
  * </ul>
  */
 public interface WindCarrier {
@@ -39,4 +42,11 @@ public interface WindCarrier {
     Long ventus$firstSample();
 
     void ventus$setFirstSample(Long gameTime);
+
+    /**
+     * @return the smoothed vertical wind written by the last sample ({@code 0} until first sampled)
+     */
+    double ventus$vertical();
+
+    void ventus$setVertical(double vertical);
 }

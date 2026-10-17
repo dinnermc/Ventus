@@ -211,6 +211,48 @@ public final class WindModel {
     }
 
     /**
+     * How much of a terrain-locked effect survives at a height above the ground: an exponential
+     * decay with {@code falloff} as its e-folding distance.
+     *
+     * <p>A ridge lifts the air beside it; an aircraft crossing the range far above the crest should
+     * feel almost none of it. Both the orographic term and the leeward turbulence are scaled by this,
+     * while thermals deliberately are not — a thermal exists <em>because</em> it rose.
+     *
+     * @param heightAboveGround how far above the terrain, in blocks ({@code <= 0} counts as ground)
+     * @param falloff           the e-folding distance in blocks; {@code <= 0} disables the decay
+     * @return a factor in {@code (0, 1]}
+     */
+    public static double heightDecay(final double heightAboveGround, final double falloff) {
+        if (falloff <= 0.0 || heightAboveGround <= 0.0) {
+            return 1.0;
+        }
+        return Math.exp(-heightAboveGround / falloff);
+    }
+
+    /**
+     * One step of exponential smoothing, easing {@code current} towards {@code target} by a factor
+     * that depends on how much time has passed rather than on the frame rate.
+     *
+     * <p>Used on the thermal and orographic terms only: both are derived from integer terrain
+     * heights, so as an aircraft moves the sampled columns change and the updraft would otherwise
+     * step. Gusts are not smoothed, because they are meant to be quick.
+     *
+     * @param current       the previously smoothed value
+     * @param target        the value to ease towards
+     * @param seconds       the time constant (how long to close about 63% of the gap); {@code <= 0}
+     *                      disables smoothing and returns {@code target}
+     * @param deltaSeconds  the time since the previous step
+     * @return the new smoothed value
+     */
+    public static double approach(final double current, final double target, final double seconds,
+            final double deltaSeconds) {
+        if (seconds <= 0.0) {
+            return target;
+        }
+        return current + (target - current) * (1.0 - Math.exp(-deltaSeconds / seconds));
+    }
+
+    /**
      * Evaluates the field at a point and time.
      *
      * @param pressure    the pressure potential

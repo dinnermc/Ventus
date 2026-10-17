@@ -46,7 +46,10 @@ public final class VentusConfig {
     public static final ModConfigSpec.DoubleValue THERMAL_HOT_TEMPERATURE;
     public static final ModConfigSpec.DoubleValue SLOPE_PROBE;
     public static final ModConfigSpec.DoubleValue SLOPE_STRENGTH;
+    public static final ModConfigSpec.DoubleValue SLOPE_HEIGHT_FALLOFF;
     public static final ModConfigSpec.DoubleValue LEE_GUST_BOOST;
+    public static final ModConfigSpec.DoubleValue VERTICAL_SMOOTH_SECONDS;
+    public static final ModConfigSpec.DoubleValue THERMAL_SKY_CLEARANCE;
 
     public static final ModConfigSpec.DoubleValue OVERWORLD_MAGNITUDE;
     public static final ModConfigSpec.DoubleValue OVERWORLD_DIRECTION;
@@ -166,11 +169,31 @@ public final class VentusConfig {
                         "vertical cliffs, above 1 exaggerates them. Negative slopes give downdraft.")
                 .defineInRange("slopeStrength", 0.5, -5.0, 5.0);
 
+        SLOPE_HEIGHT_FALLOFF = builder
+                .comment("How fast the orographic lift and the leeward turbulence die out with altitude",
+                        "above the terrain, in blocks: both are multiplied by exp(-height / this). A ridge",
+                        "pushes the air right beside it, not an aircraft crossing the range far above the",
+                        "crest. At 50 a plane 150 blocks up feels about 5% of the lift at the ridge.")
+                .defineInRange("slopeHeightFalloff", 50.0, 1.0, 1000.0);
+
         LEE_GUST_BOOST = builder
                 .comment("Extra gust amplitude behind a ridge, as a fraction of the base gust, at a slope",
                         "of -1 or steeper (0 = none). Windward ground is smooth lift and gets nothing.",
                         "1.0 doubles the gusts on the lee side.")
                 .defineInRange("leeGustBoost", 1.0, 0.0, 10.0);
+
+        VERTICAL_SMOOTH_SECONDS = builder
+                .comment("Time constant, in seconds, over which the thermal and orographic updrafts ease",
+                        "towards their target. Both are derived from integer terrain heights, so without",
+                        "this the vertical wind would step as the sampled columns change. Gusts are not",
+                        "smoothed: they are meant to be quick.")
+                .defineInRange("verticalSmoothSeconds", 1.5, 0.0, 60.0);
+
+        THERMAL_SKY_CLEARANCE = builder
+                .comment("How far above the terrain a point must be before it sees the full sun for",
+                        "thermal purposes, in blocks. Thermals need direct sun, so under a roof or deep",
+                        "in a forest canopy they fade out over this distance instead of switching off.")
+                .defineInRange("thermalSkyClearance", 8.0, 0.0, 256.0);
 
         builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
                         "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
@@ -269,13 +292,33 @@ public final class VentusConfig {
         return SLOPE_STRENGTH.get();
     }
 
+    /** @return the hard cap: the total wind never exceeds this multiple of the base wind magnitude */
+    public static double maxWindMultiplier() {
+        return MAX_WIND_MULTIPLIER.get();
+    }
+
+    /** @return altitude over which the orographic lift and leeward turbulence decay by a factor of e */
+    public static double slopeHeightFalloff() {
+        return SLOPE_HEIGHT_FALLOFF.get();
+    }
+
     /** @return the extra gust amplitude behind a ridge, as a fraction of the base gust */
     public static double leeGustBoost() {
         return LEE_GUST_BOOST.get();
     }
 
+    /** @return seconds over which the vertical terms ease towards their target (0 = no smoothing) */
+    public static double verticalSmoothSeconds() {
+        return VERTICAL_SMOOTH_SECONDS.get();
+    }
+
+    /** @return blocks of clearance needed above the terrain for a point to see full sun */
+    public static double thermalSkyClearance() {
+        return THERMAL_SKY_CLEARANCE.get();
+    }
+
     /**
-     * @return the stage-2 model inputs, read fresh from the (hot-reloadable) config on every call
+     * @return the field model inputs, read fresh from the (hot-reloadable) config on every call
      */
     public static WindModel.Settings windModelSettings() {
         return new WindModel.Settings(
