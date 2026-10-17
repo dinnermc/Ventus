@@ -211,6 +211,92 @@ public final class WindModel {
     }
 
     /**
+     * The height of the ground at one column, or {@link Double#NaN} when it is not known.
+     *
+     * <p>Supplied by the caller so that <em>which</em> surface counts is an explicit decision rather
+     * than something buried in the arithmetic. For orographic lift the caller must return the surface
+     * the air actually flows over — the sea surface, not the seabed, and the ground under a canopy,
+     * not the canopy itself. See {@code WindField.surfaceAt}.
+     */
+    @FunctionalInterface
+    public interface ColumnHeight {
+        double at(double x, double z);
+    }
+
+    /**
+     * The rise-over-run of the ground along a horizontal direction: the signed slope that orographic
+     * lift is built from, positive where the air is about to climb.
+     *
+     * <p>Two columns {@code probe} blocks either side, so a single-block step is averaged away
+     * instead of towering over the answer, and the result is clamped to a 45&deg; slope — both the
+     * physical maximum worth modelling and the slope at which {@link #leeGustBoost} reaches its
+     * ceiling. Minecraft terrain can be a vertical wall, and letting that through would turn ridge
+     * lift into a 45 m/s updraft.
+     *
+     * <p>The direction is normalised here, so the caller may pass an arbitrary non-zero vector.
+     *
+     * @param heights the ground surface the air flows over (see {@link ColumnHeight})
+     * @param x       world X of the point being measured
+     * @param z       world Z of the point being measured
+     * @param dirX    X component of the horizontal direction to measure along
+     * @param dirZ    Z component of the horizontal direction to measure along
+     * @param probe   blocks either side to sample; {@code <= 0} gives {@link Double#NaN}
+     * @return the slope clamped to {@code [-1, 1]}, or {@link Double#NaN} if either column is unknown
+     */
+    public static double slopeAlongWind(final ColumnHeight heights, final double x, final double z,
+            final double dirX, final double dirZ, final double probe) {
+        final double dirLength = Math.hypot(dirX, dirZ);
+        if (dirLength == 0.0 || probe <= 0.0) {
+            return Double.NaN;
+        }
+
+        final double ux = dirX / dirLength;
+        final double uz = dirZ / dirLength;
+
+        final double downwind = heights.at(x + ux * probe, z + uz * probe);
+        final double upwind = heights.at(x - ux * probe, z - uz * probe);
+        if (Double.isNaN(downwind) || Double.isNaN(upwind)) {
+            return Double.NaN;
+        }
+
+        final double slope = (downwind - upwind) / (2.0 * probe);
+        if (slope > 1.0) {
+            return 1.0;
+        }
+        return slope < -1.0 ? -1.0 : slope;
+    }
+
+    /**
+     * Keeps a finished wind within {@code maxMultiplier} times the prevailing wind at the same point,
+     * and guarantees that it is finite.
+     *
+     * <p>The whole vector is scaled, <em>never</em> clipped per component. Clipping each component
+     * separately would change the heading exactly when the cap engages — the strongest gusts would
+     * arrive from the wrong direction — whereas scaling preserves the direction to the last bit.
+     *
+     * <p>A non-finite component zeroes the whole vector rather than being clamped, so a NaN can
+     * never reach a rigid body and turn into a permanent one-tick force.
+     *
+     * @param wind         the finished wind, already scaled; modified in place
+     * @param prevailing   the prevailing wind at the same point (after any height profile)
+     * @param maxMultiplier the budget as a multiple of {@code prevailing}
+     * @return the resulting magnitude, {@code 0} if the wind was non-finite
+     */
+    public static double clampToBudget(final Vector3d wind, final double prevailing, final double maxMultiplier) {
+        if (!Double.isFinite(wind.x) || !Double.isFinite(wind.y) || !Double.isFinite(wind.z)) {
+            wind.set(0.0, 0.0, 0.0);
+            return 0.0;
+        }
+
+        final double cap = maxMultiplier * prevailing;
+        final double mag2 = wind.lengthSquared();
+        if (mag2 > cap * cap) {
+            wind.mul(cap / Math.sqrt(mag2));
+        }
+        return wind.length();
+    }
+
+    /**
      * How much of a terrain-locked effect survives at a height above the ground: an exponential
      * decay with {@code falloff} as its e-folding distance.
      *

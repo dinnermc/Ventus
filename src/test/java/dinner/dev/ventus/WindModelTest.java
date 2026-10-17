@@ -323,13 +323,142 @@ class WindModelTest {
     }
 
     @Test
+    void fieldIsContinuousOverTime() {
+        // The same property as the spatial walk, on the other axis: hold the position and advance
+        // game time a second at a time. A step here would read as a gust arriving instantly.
+        final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
+        final WindModel.Result out = new WindModel.Result();
+        final Vector3d prev = new Vector3d();
+        double maxStep = 0.0;
+
+        WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, 500.0, -800.0, 0.0, BASE, DRY, s, out);
+        for (int second = 1; second <= 6000; second++) {
+            WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, 500.0, -800.0, second, BASE, DRY, s, out);
+            if (second > 1) {
+                maxStep = Math.max(maxStep, prev.distance(out.total));
+            }
+            prev.set(out.total);
+        }
+
+        assertTrue(maxStep < 0.05 * BASE.length(),
+                "wind jumped " + maxStep + " per second (should be smooth)");
+    }
+
+    @Test
+    void fieldIsContinuousWithTheLeewardGustsOn() {
+        // Continuity must survive the stage-4 path too: the leeward roughening is a multiplier on
+        // the gusts, so if it were stepped or discontinuous the roughest side of a ridge would jump.
+        final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
+        final WindModel.Result out = new WindModel.Result();
+        final Vector3d prev = new Vector3d();
+        double maxStep = 0.0;
+
+        WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, 0.0, 100.0, 0.0, BASE, DRY, 2.0, s, out);
+        for (double x = 0.5; x <= 6000.0; x += 0.5) {
+            WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, x, 100.0, 0.0, BASE, DRY, 2.0, s, out);
+            if (x > 0.5) {
+                maxStep = Math.max(maxStep, prev.distance(out.total));
+            }
+            prev.set(out.total);
+        }
+
+        assertTrue(maxStep < 0.05 * BASE.length(),
+                "wind jumped " + maxStep + " per half-block (should be smooth)");
+    }
+
+    @Test
     void isDeterministic() {
-        final WindModel.Result a = evaluate(WindModelTest::pressure, WindModelTest::gust,
-                42.0, 84.0, 12.0, BASE, DRY, settings(1500, 1200, 1.0, 3.0));
-        final Vector3d first = new Vector3d(a.total);
-        final WindModel.Result b = evaluate(WindModelTest::pressure, WindModelTest::gust,
-                42.0, 84.0, 12.0, BASE, DRY, settings(1500, 1200, 1.0, 3.0));
-        assertEquals(first.x, b.total.x, 0.0);
-        assertEquals(first.z, b.total.z, 0.0);
+        // No state and nothing stored: the same point, time, noise and settings must give the same
+        // value on every call, including down the leeward path.
+        final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
+        final Vector3d first = new Vector3d(
+                evaluate(WindModelTest::pressure, WindModelTest::gust, 42.0, 84.0, 12.0, BASE, DRY, 1.7, s).total);
+
+        for (int i = 0; i < 50; i++) {
+            final Vector3d again = new Vector3d(
+                    evaluate(WindModelTest::pressure, WindModelTest::gust, 42.0, 84.0, 12.0, BASE, DRY, 1.7, s).total);
+            assertEquals(first.x, again.x, 0.0);
+            assertEquals(first.z, again.z, 0.0);
+        }
+    }
+
+    @Test
+    void flatWaterOverASlopingSeabedIsNotARidge() {
+        // The air flows over the sea surface, not the seabed. Model a shallow sea whose floor climbs
+        // across the probe distance while the water surface stays level. Reading the seabed invents
+        // orographic lift under a boat; reading the surface correctly gives none.
+        final double probe = 16.0;
+        final WindModel.ColumnHeight seabed = (x, z) -> 40.0 + (x / (2.0 * probe)) * 15.0;
+        final WindModel.ColumnHeight seaSurface = (x, z) -> 60.0;
+
+        final double overTheFloor = WindModel.slopeAlongWind(seabed, 0.0, 0.0, 1.0, 0.0, probe);
+        final double overTheWater = WindModel.slopeAlongWind(seaSurface, 0.0, 0.0, 1.0, 0.0, probe);
+
+        assertTrue(overTheFloor > 0.4, "the seabed does slope: " + overTheFloor);
+        assertEquals(0.0, overTheWater, 1e-12, "flat water must read as flat ground");
+    }
+
+    @Test
+    void aForestEdgeIsNotACliff() {
+        // Leaves are excluded from the surface the air is forced over, so a canopy that ends in a
+        // step is flat ground to the wind rather than a cliff manufacturing lift.
+        final double probe = 16.0;
+        final WindModel.ColumnHeight withLeaves = (x, z) -> x < 0.0 ? 70.0 : 90.0;
+        final WindModel.ColumnHeight withoutLeaves = (x, z) -> 70.0;
+
+        final double canopyEdge = WindModel.slopeAlongWind(withLeaves, 0.0, 0.0, 1.0, 0.0, probe);
+        final double groundBelow = WindModel.slopeAlongWind(withoutLeaves, 0.0, 0.0, 1.0, 0.0, probe);
+
+        assertTrue(canopyEdge > 0.5, "with leaves the canopy edge reads as a steep cliff: " + canopyEdge);
+        assertEquals(0.0, groundBelow, 1e-12, "without leaves there is no hill at all");
+    }
+
+    @Test
+    void slopeIsMeasuredAlongTheGivenDirectionOnly() {
+        // A north-south wall must not read as a slope for a wind blowing east-west, and the
+        // direction is normalised so the caller may pass any non-zero vector.
+        final WindModel.ColumnHeight wall = (x, z) -> z * 0.5;
+
+        assertEquals(0.5, WindModel.slopeAlongWind(wall, 0.0, 0.0, 0.0, 1.0, 16.0), 1e-12);
+        assertEquals(0.5, WindModel.slopeAlongWind(wall, 0.0, 0.0, 0.0, 40.0, 16.0), 1e-12);
+        assertEquals(0.0, WindModel.slopeAlongWind(wall, 0.0, 0.0, 1.0, 0.0, 16.0), 1e-12);
+    }
+
+    @Test
+    void theCapKeepsTheWindHeading() {
+        // Clipping each component separately would turn the wind exactly when the cap engages, so
+        // the strongest gusts would arrive from the wrong direction. Scaling the whole vector cannot.
+        final Vector3d wind = new Vector3d(30.0, 40.0, 0.0);
+        final double before = wind.length();
+
+        WindModel.clampToBudget(wind, 10.0, 3.0);
+
+        assertEquals(30.0, wind.length(), 1e-9, "the budget is 3 x the prevailing 10");
+        // Same fractions of the original: the heading is preserved bit for bit.
+        assertEquals(30.0 / before * 30.0, wind.x, 1e-9);
+        assertEquals(40.0 / before * 30.0, wind.y, 1e-9);
+        assertEquals(0.0, wind.z, 1e-12);
+    }
+
+    @Test
+    void theCapLeavesAnInBudgetWindAlone() {
+        final Vector3d wind = new Vector3d(3.0, 4.0, 0.0);
+        WindModel.clampToBudget(wind, 10.0, 3.0);
+        assertEquals(5.0, wind.length(), 1e-12);
+        assertEquals(3.0, wind.x, 1e-12);
+        assertEquals(4.0, wind.y, 1e-12);
+    }
+
+    @Test
+    void aNonFiniteWindIsZeroedNotClamped() {
+        // Dividing a NaN by its magnitude would still be a NaN, and a NaN velocity is a permanent
+        // one-tick force on a rigid body. Zero is the only safe answer.
+        final Vector3d wind = new Vector3d(3.0, Double.NaN, 0.0);
+        assertEquals(0.0, WindModel.clampToBudget(wind, 10.0, 3.0), 0.0);
+        assertEquals(0.0, wind.length(), 0.0);
+
+        wind.set(Double.POSITIVE_INFINITY, 1.0, -1.0);
+        assertEquals(0.0, WindModel.clampToBudget(wind, 10.0, 3.0), 0.0);
+        assertEquals(0.0, wind.length(), 0.0);
     }
 }

@@ -34,7 +34,9 @@ import java.util.Optional;
  *     {@link Heightmap.Types#OCEAN_FLOOR} (solid blocks, <b>water and leaves ignored edge cases
  *     aside</b>): a boat floating on the sea sits <em>above</em> its reference and still catches the
  *     wind, while a plane parked on the ground feels almost nothing. Leaves count as solid terrain,
- *     so a plane skimming a forest sees the canopy as ground (trees shelter the wind);</li>
+ *     so a plane skimming a forest sees the canopy as ground (trees shelter the wind). Note that the
+ *     terrain-locked stage-4 terms deliberately use a <em>different</em> map, see
+ *     {@link #surfaceAt};</li>
  *     <li>a <b>temporal fade-in</b> (see {@link #entryRamp}): the wind ramps from 0 to full over
  *     {@link #ENTRY_RAMP_SECONDS} seconds after a sub-level's first sample, so nothing jolts when a
  *     world loads or a sub-level enters a windy region;</li>
@@ -132,15 +134,37 @@ public final class WindField {
     private static final Map<ResourceLocation, Double> WARMTH = new HashMap<>();
 
     /**
-     * The terrain height at a column, or {@link Double#NaN} when its chunk is not loaded. Like the
-     * rest of the field, this never forces a chunk load.
+     * The height of the <b>ground</b> at a column, or {@link Double#NaN} when its chunk is not loaded.
+     * Like the rest of the field, this never forces a chunk load.
+     *
+     * <p>Uses {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES}, not {@code OCEAN_FLOOR}, because
+     * these terms model what the air is being forced over, and to the air the sea surface and the
+     * leaves simply are not there:
+     *
+     * <ul>
+     *     <li><b>Water.</b> {@code OCEAN_FLOOR} ignores liquids, so over a shallow sea with a sloping
+     *     seabed it returns the seabed and would invent orographic lift under a boat. This map counts
+     *     liquids, so the sea surface is the ground and open water is flat.</li>
+     *     <li><b>Leaves.</b> {@code OCEAN_FLOOR} counts leaves as solid, so the edge of a forest —
+     *     canopies ten blocks tall ending in a step — reads as a cliff and would generate lift where
+     *     there is no hill. This map excludes leaves.</li>
+     * </ul>
+     *
+     * <p>The height profile in {@link #fadeAt} deliberately keeps {@code OCEAN_FLOOR}: there the
+     * question is how sheltered a point is, and a boat on the sea or a plane above a canopy really
+     * are exposed to the wind.
      */
-    private static double terrainAt(final ServerLevel level, final int x, final int z) {
+    private static double surfaceAt(final ServerLevel level, final int x, final int z) {
+        return columnAt(level, x, z, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
+    }
+
+    private static double columnAt(final ServerLevel level, final int x, final int z,
+            final Heightmap.Types type) {
         final LevelChunk chunk = level.getChunkSource().getChunkNow(x >> 4, z >> 4);
         if (chunk == null) {
             return Double.NaN;
         }
-        return chunk.getHeight(Heightmap.Types.OCEAN_FLOOR, x & 15, z & 15);
+        return chunk.getHeight(type, x & 15, z & 15);
     }
 
     /**
@@ -236,37 +260,21 @@ public final class WindField {
     }
 
     /**
-     * The rise-over-run of the terrain along the <b>base wind</b> direction, or {@link Double#NaN}
+     * The rise-over-run of the ground along the <b>base wind</b> direction, or {@link Double#NaN}
      * when either probe column is not loaded. Positive means the wind is about to climb a windward
      * face, negative that it is pouring off one.
      *
      * <p>Deliberately measured along the prevailing base wind rather than the local (base + field)
      * wind: a mountain's lee side is a fixed place, and it should not flip because the field deflected
-     * the wind a few degrees this tick. Two columns, {@link VentusConfig#slopeProbe()} blocks apart
-     * either side, so a single-block cliff is averaged away instead of towering over the answer; and
-     * the result is clamped to a 45&deg; slope, which is both the physical maximum worth modelling
-     * and the slope at which {@link WindModel#leeGustBoost} reaches its ceiling.
+     * the wind a few degrees this tick. The probing and the 45&deg; clamp live in
+     * {@link WindModel#slopeAlongWind}; what this method adds is the decision of <em>which</em>
+     * surface is measured — {@link #surfaceAt}, so open water and forest edges are flat ground rather
+     * than phantom cliffs.
      */
     private static double slopeAlongWind(final ServerLevel level, final Vector3dc worldPos,
             final double dirX, final double dirZ) {
-        if (dirX == 0.0 && dirZ == 0.0) {
-            return Double.NaN;
-        }
-
-        final double probe = VentusConfig.slopeProbe();
-        final double downwind = terrainAt(level,
-                Mth.floor(worldPos.x() + dirX * probe), Mth.floor(worldPos.z() + dirZ * probe));
-        final double upwind = terrainAt(level,
-                Mth.floor(worldPos.x() - dirX * probe), Mth.floor(worldPos.z() - dirZ * probe));
-
-        if (Double.isNaN(downwind) || Double.isNaN(upwind)) {
-            return Double.NaN;
-        }
-
-        // Clamped to a 45 degree slope: Minecraft terrain can be a vertical wall, and letting that
-        // through would turn orographic lift into a 45 m/s updraft. It is also the slope at which
-        // leeGustBoost is defined to reach its ceiling.
-        return Mth.clamp((downwind - upwind) / (2.0 * probe), -1.0, 1.0);
+        return WindModel.slopeAlongWind((x, z) -> surfaceAt(level, Mth.floor(x), Mth.floor(z)),
+                worldPos.x(), worldPos.z(), dirX, dirZ, VentusConfig.slopeProbe());
     }
 
     /**
@@ -360,11 +368,18 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
 
-        // The dimension's base wind is still in dest here: its magnitude is the budget the final
-        // clamp works from, and its direction is what the terrain slope is measured along.
+        // The dimension's base wind is still in dest here: its direction is what the terrain slope is
+        // measured along, and its magnitude is the starting point for the clamp's budget.
         final double baseMag = dest.length();
         final double windScale = VentusConfig.windScale();
         final double entry = entryRamp(level, carrier);
+
+        // The budget is the base wind as it actually is *here* — after the height profile, the
+        // fade-in and windScale — not the dimension's sea-level figure. A jet stream that raises the
+        // base at altitude then raises the budget with it, so the cap keeps acting on the
+        // perturbations rather than clipping a number that belongs to a different altitude.
+        final double scale = fade * entry * windScale;
+        final double prevailing = baseMag * scale;
 
         final NoiseSet noise = noiseSet(level);
         final WindModel.Settings settings = VentusConfig.windModelSettings();
@@ -372,7 +387,7 @@ public final class WindField {
         // Both terrain-locked terms die out with altitude: a ridge lifts the air beside it, not an
         // aircraft crossing the range far above the crest. Thermals are not decayed, because a
         // thermal exists precisely because it rose.
-        final double terrain = terrainAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
+        final double terrain = surfaceAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
         final double decay = Double.isNaN(terrain)
                 ? 1.0 : WindModel.heightDecay(worldPos.y() - terrain, VentusConfig.slopeHeightFalloff());
 
@@ -393,34 +408,27 @@ public final class WindField {
                 VentusConfig.verticalSmoothSeconds(), 1.0 / 20.0);
         carrier.ventus$setVertical(vertical);
 
-        dest.set(MODEL_RESULT.total).mul(fade * entry * windScale);
-        dest.y = vertical * entry * windScale;
+        dest.set(MODEL_RESULT.total).mul(scale);
+        dest.y = vertical * scale;
 
-        clampToBudget(dest, baseMag);
+        clampToBudget(dest, prevailing);
     }
 
     /**
-     * The last thing before a wind is stored: guarantee it is finite, then keep its magnitude within
-     * {@code maxWindMultiplier} times the dimension's base wind (and {@code windScale}).
+     * The last thing before a wind is stored: the budget clamp, in terms of the prevailing wind here.
      *
      * <p>Every term is bounded on its own, but they now <em>sum</em> — base, pressure field, gusts
-     * (roughened by rain and by the lee side), the thermal and the orographic term, all multiplied by
-     * the height profile, the fade-in and {@code windScale}. With the defaults the horizontal already
-     * caps at 3 &times; 3 = 9 m/s and the two vertical terms reach at most 2.5 + 9 &times; 0.5 = 7 m/s,
-     * so the whole vector tops out near 11.4 m/s before this clamp. This is the safety net for that
-     * sum, and the guard against a NaN ever reaching a rigid body.
+     * (roughened by rain and by the lee side), the thermal and the orographic term. With the defaults
+     * the horizontal already caps at 3 &times; 3 = 9 m/s and the two vertical terms reach at most
+     * 2.5 + 9 &times; 0.5 = 7 m/s, so the whole vector tops out near 11.4 m/s before this clamp. This
+     * is the safety net for that sum, and the guard against a NaN ever reaching a rigid body.
+     *
+     * @param wind       the finished wind, already scaled
+     * @param prevailing the prevailing wind here: the base wind after the height profile, the
+     *                   fade-in and {@code windScale}
      */
-    private static void clampToBudget(final Vector3d wind, final double baseMag) {
-        if (!Double.isFinite(wind.x) || !Double.isFinite(wind.y) || !Double.isFinite(wind.z)) {
-            wind.set(0.0, 0.0, 0.0);
-            return;
-        }
-
-        final double cap = VentusConfig.maxWindMultiplier() * baseMag * VentusConfig.windScale();
-        final double mag2 = wind.lengthSquared();
-        if (mag2 > cap * cap) {
-            wind.mul(cap / Math.sqrt(mag2));
-        }
+    private static void clampToBudget(final Vector3d wind, final double prevailing) {
+        WindModel.clampToBudget(wind, prevailing, VentusConfig.maxWindMultiplier());
     }
 
     /**
@@ -467,7 +475,8 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, 1.0);
         dest.heightFactor = fade;
 
-        // The base wind is in dest.base here; its magnitude is the budget the clamp works from.
+        // The base wind is in dest.base here; its magnitude, once the height profile and windScale
+        // are applied below, is the budget the clamp works from.
         final double baseMag = dest.base.length();
         final double windScale = VentusConfig.windScale();
 
@@ -476,7 +485,7 @@ public final class WindField {
         dest.weather = weather;
 
         final WindModel.Settings settings = VentusConfig.windModelSettings();
-        final double terrain = terrainAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
+        final double terrain = surfaceAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
         final double decay = Double.isNaN(terrain)
                 ? 1.0 : WindModel.heightDecay(worldPos.y() - terrain, VentusConfig.slopeHeightFalloff());
 
@@ -501,7 +510,7 @@ public final class WindField {
         dest.total.set(MODEL_RESULT.total).mul(scale);
         dest.total.y = (dest.thermal + dest.orographic) * scale;
         dest.capped = MODEL_RESULT.capped;
-        clampToBudget(dest.total, baseMag);
+        clampToBudget(dest.total, baseMag * scale);
         return dest;
     }
 
@@ -554,6 +563,9 @@ public final class WindField {
             return 0.0;
         }
 
+        // OCEAN_FLOOR on purpose: the question here is how sheltered the point is, so water does not
+        // count and a boat on the sea sits above its reference. The terrain-locked terms use
+        // MOTION_BLOCKING_NO_LEAVES instead — see surfaceAt.
         final double terrain = chunk.getHeight(Heightmap.Types.OCEAN_FLOOR, x & 15, z & 15);
         final double surfaceCalm = VentusConfig.surfaceCalm();
         return surfaceCalm + (1.0 - surfaceCalm)
