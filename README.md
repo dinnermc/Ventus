@@ -20,7 +20,7 @@ sub-level, then read by the physics hooks (`ServerSubLevelWindMixin`). It is bui
 | Gusts | config: `gustScale`, `gustPeriod`, `gustAmplitude`, `gustLateralFraction` | A second, shorter-wavelength noise that puffs mostly **along** the wind (with a small lateral fraction), at `gustAmplitude` (35%) of the base wind, over `gustScale` (150) blocks and `gustPeriod` (120 s). |
 | Weather | config: `rainMultiplier`, `thunderMultiplier` | The field and the gusts are scaled by the dimension's **rain and thunder levels**, which vanilla fades in and out over ~5 s: `1 + (rainMultiplier − 1) × rainLevel`, then `1 + (thunderMultiplier − 1) × thunderLevel` on top (1.5 × 1.6 = **2.4** at full storm). Using the continuous levels rather than the raining/thundering flags means no step at the threshold and no per-position biome, heightmap or chunk lookup. The **base wind is not scaled** — only the perturbation and the gusts are. That asymmetry is deliberate, weather makes the air rougher rather than the prevailing flow stronger, but it does mean a storm's perturbation can outgrow the base and turn the combined wind the other way. |
 | Thermals | config: `thermalStrength`, `thermalScale`, `thermalPeriod`, `thermalColdTemperature`, `thermalHotTemperature`, `thermalSkyClearance`, `verticalSmoothSeconds` | An **updraft** of up to `thermalStrength` (2.5 m/s) over hot ground in full sun, carved into **bubbles** by its own noise over `thermalScale` (200) blocks and `thermalPeriod` (90 s). Only the positive half of the noise lifts, so the air between bubbles is still rather than sinking. The gates multiply: sun (dawn and dusk ramp over 1500 ticks each), biome warmth from the biome's base temperature (`thermalColdTemperature` 0.8 → no thermals, `thermalHotTemperature` 2.0 → full strength, so deserts and badlands peak and temperate biomes stay out), dryness (`1 − rainLevel`, since an overcast sky has no convection) and **sky clearance** — the `WORLD_SURFACE` height under the point must clear it by `thermalSkyClearance` (8) blocks, ramped in smoothly, so a sample under a canopy, a roof or in a cave gets nothing. Thermals are **not** faded with altitude, because a thermal exists precisely because it rose. |
-| Orographic lift | config: `slopeProbe`, `slopeStrength`, `slopeHeightFalloff`, `leeGustBoost` | Air moving at `V` over ground rising at slope `s` climbs at **`V × s`** — ridge lift on a windward face, and the **sink** behind the ridge, since the same signed term covers both. The slope is the height difference between two columns `slopeProbe` (16) blocks either side of the point **along the base wind**, clamped to a 45° slope. It is measured on `MOTION_BLOCKING_NO_LEAVES`, **not** `OCEAN_FLOOR`: that map counts liquids and excludes leaves, so open water is flat ground (a shallow sea with a sloping seabed no longer invents lift under a boat) and the edge of a forest is not a cliff. Both this and the lee gust roughening are multiplied by **`exp(−h / slopeHeightFalloff)`** (one e-fold at 50 blocks): a ridge lifts the air beside it, not an aircraft crossing the range far above the crest, so both terms die out with altitude while the thermals above do not. On the lee side the gusts are also multiplied by `1 + leeGustBoost` (2× at a 45° lee slope), which is what makes flying near mountains dangerous. |
+| Orographic lift | config: `slopeProbe`, `slopeStrength`, `slopeHeightFalloff`, `leeGustBoost` | Air moving at `V` over ground rising at slope `s` climbs at **`V × s`** — ridge lift on a windward face, and the **sink** behind the ridge, since the same signed term covers both. `V` is taken as the local wind's **signed component along the direction `s` was measured in**, so once an inversion has turned the air around, the same face gives sink instead of lift. The slope is the height difference between two columns `slopeProbe` (16) blocks either side of the point **along the base wind**, clamped to a 45° slope. It is measured on `MOTION_BLOCKING_NO_LEAVES`, **not** `OCEAN_FLOOR`: that map counts liquids and excludes leaves, so open water is flat ground (a shallow sea with a sloping seabed no longer invents lift under a boat) and the edge of a forest is not a cliff. Both this and the lee gust roughening are multiplied by **`exp(−h / slopeHeightFalloff)`** (one e-fold at 50 blocks): a ridge lifts the air beside it, not an aircraft crossing the range far above the crest, so both terms die out with altitude while the thermals above do not. On the lee side the gusts are also multiplied by `1 + leeGustBoost` (2× at a 45° lee slope), which is what makes flying near mountains dangerous. |
 | Vertical smoothing | config: `verticalSmoothSeconds` | The thermal and the orographic term are read from integer terrain heights and biome ids, so both **step** when the sampled column changes. They ease towards their target with a 1.5 s time constant instead, so flying past a ridge does not jolt. The gusts are deliberately left unsmoothed — they are meant to be quick. |
 | Height profile | config: `fadeHeight`, `surfaceCalm` | Wind ramps with altitude above the terrain: `surfaceCalm` (10%) at the surface to full at `fadeHeight` (32 blocks), smoothstep in between. Uses vanilla `OCEAN_FLOOR` heightmap (solid blocks; **water ignored**, **leaves count as terrain**), so a boat floating on the sea sits above its reference and still catches the wind, while a plane parked on the ground feels almost nothing. This is the **only** place `OCEAN_FLOOR` is used — the terrain-locked terms above deliberately use `MOTION_BLOCKING_NO_LEAVES` instead, because there the question is what the air is being forced over, and to the air neither the sea surface nor a canopy exists. A **submerged** sample point (centre block holds a fluid) gets **zero** wind. |
 | Jet stream | config: `jetAltitude`, `jetThickness`, `jetStrength` | A band of fast air at an **absolute** world Y (`jetAltitude` 220), not a height above the terrain — a jet is a property of the atmosphere and has nothing to do with the ground beneath it. The base wind is multiplied by up to `1 + jetStrength` (**3×** by default, so a 9 m/s core before the shear adds to it), easing smoothly to 1 at `jetAltitude ± jetThickness` (60) and to nothing outside. It rides on the dimension's prevailing direction and never turns it, and it does **not** scale the pressure field or the gusts: a jet is laminar — fast, not rough — so those are sized against the base wind *before* the altitude profile and the core comes out a smooth river of air rather than a storm. The jet still raises the clamp budget with it, because that budget is a ceiling and not a target. It does **not** touch the vertical terms: a jet is horizontal wind. |
@@ -158,6 +158,11 @@ default = 16641 samples) and reports how often the wind points **against** the c
 `/windfield stats at <pos> [radius] [step]` centres the sweep on a point instead, so it runs from a
 console or RCON with no player online.
 
+Both forms need operator permission (level 2) and are capped at **65,000 samples**: the whole sweep
+runs on the server thread, and the argument ranges would otherwise allow over four million points,
+which locks the game rather than merely taking a while. An over-greedy radius/step pair is refused
+before the loop starts, with the count in the message (at radius 4096 the step must be 33 or more).
+
 **Window size matters.** The pressure noise is correlated over `fieldScale` (1500 blocks), so a window
 much smaller than that measures a *single patch* of noise rather than the distribution — a 784-block
 window first read 85% reversed where the real figure is 50%. The default covers several cells; for a
@@ -248,9 +253,11 @@ Stage 4 checks:
 13. **A forest edge is not a hill (4)** — skim the boundary of a forest at low altitude, crossing from
     clearing to canopy and back: `slope` must stay near `0.000`. Only real ground counts; leaves are
     excluded from the surface the air is forced over.
-14. **The wind keeps its heading when the cap engages (4)** — at the cliff in a storm the reported
-    `total` must point the same way as `base`; the cap scales the whole vector rather than clipping
-    components, so the roughest air never arrives from a new direction.
+14. **The wind keeps its heading when the cap engages (4)** — at the cliff in a storm, compare `total`
+    against the *uncapped* sum `base + field + gust`, **not** against `base`: what has to survive is the
+    direction of that sum. The cap scales the whole vector rather than clipping components, so engaging
+    it changes how hard the wind blows, not which way it points. (It preserves the *sum's* heading,
+    which in a storm is not necessarily `direction`'s — see *The storm can reverse the wind*.)
 15. **A parked heavy sub-level does not float (5)** — park a heavy sub-level in mid-air under a
     thermal at noon in a desert, and leave it. It must settle, not climb. The drag impulse is 3D, so
     a thermal does push up on it — at most `universalDrag` × `thermalStrength` ≈ 0.09 × 2.5 =
@@ -357,8 +364,8 @@ tell a wrong model from a misreading.
       direction of the *uncapped* sum `base + field + gust`. Verified at a cliff: the sum points
       228.8° and `total` points 228.8°, identical; and `|total|` = 8.41 = 3 × 2.804, exactly
       `maxWindMultiplier` × base. The cap did its job. *(The first wording of this check asked for
-      `total` to match `base`, which is only true while `field` is small — see the open question
-      below.)*
+      `total` to match `base`, which is only true while `field` is small — see *The storm can reverse the
+      wind* below.)*
 - [x] **15. A parked heavy sub-level does not float** — heavy sub-level left in mid-air under a
       desert thermal at noon: it must settle, not climb. Ceiling is `universalDrag` ×
       `thermalStrength` ≈ 0.23 m/s², far below gravity. *(Verified: falling at 10.5 m/s with
@@ -384,34 +391,62 @@ so `direction` always wins, remains the fallback if it plays badly in the world;
 not done yet, because a config key is easy to add later and awkward to take away.
 
 **Measured, with the world's own noise.** `/windfield stats` sweeps a grid sampled by the dimension's
-real `SimplexNoise` at the real seed, under the live rain and thunder levels. Four independent
-8256-block squares of 16641 samples each, 66564 samples per column, averaged:
+real `SimplexNoise` at the real seed, under the live rain and thunder levels (four independent
+8256-block squares, 16641 samples each). The headline is deliberately rounded, because it is an order
+of magnitude rather than a percentage:
 
-| | clear (`weather = 1.00`) | storm (`weather = 2.40`) |
-| --- | --- | --- |
-| total wind opposes the base | **5.6%** | **27%** |
-| `field` alone opposes the base | 50% | 50% |
-| `field` larger than `base` | 30% | 84% |
-| mean field / base ratio | 0.80 | 1.95 |
-| cap (`maxWindMultiplier`) engaged | ~0% | 21% |
+- **In clear weather, approximately 1 point in 20** has the wind pointing against `direction`.
+- **In a storm, approximately 1 point in 4.**
 
-So in a storm roughly **a quarter of the time** the wind blows against `direction`, against about
-**one point in twenty** in clear weather. The middle row is the check that the measurement is sound:
-the pressure gradient's direction is unbiased in both columns, weather only makes it *larger*, and the
-reversal rate is simply how often the bigger random vector still loses to the base. The cap engaging
-on a fifth of storm samples is the other thing worth knowing — the budget is doing real work there.
+Both are rounded for good reason. A 4096-block window holds only about seven `fieldScale` (1500)
+patches of noise, and four centres give a few dozen in all, so the margin is several points; and every
+figure tracks this particular world's seed. An earlier 784-block sweep — under a single patch —
+reported most points reversed where the truth is half, which is the same effect at its extreme.
 
-The unit tests cannot produce this figure: Minecraft is not on the test classpath, so they run on
-sine/cosine stand-in noise with a different distribution. Nor can a single small window — an early
-784-block sweep, under one `fieldScale` cell, read 85% reversed where the true figure is 50%. Hence
-the wide default on `/windfield stats` and the note under *Commands*.
+**The number that is not an estimate is the one beside it: the field points against the base about
+50% of the time in clear weather and about 50% in a storm.** The pressure gradient's direction carries
+no bias at all; weather only makes it *larger*. So `direction` is the **mean** of the wind rather than
+what any single reading says — the configured heading is what the wind does on average, not what it is
+doing at this instant.
 
-**Open consequence, reasoned from the code and not yet observed.** `WindField` measures the terrain
-slope *along the base direction*, but orographic lift is driven by the **local** wind. During an
-inversion those two point opposite ways: if the hill rises toward `direction` while the local wind
-blows the other way, the air is actually descending and the code would still hand it lift. It only
-arises on inverted samples, so it is not urgent — but it wants a decision rather than a discovery in
-play: use the signed component of the local wind along the base direction.
+One thing to know before tuning: in a storm the field already outweighs the base at roughly 4 points in
+5 (against about 1 in 3 when clear), and the cap (`maxWindMultiplier`) is engaged on about **21%** of
+storm points. Raising `rainMultiplier` will be felt nowhere that sits on the ceiling — there the wind
+is already at `maxWindMultiplier` and only the cap decides how hard it blows.
+
+None of these figures can come from a unit test: Minecraft is not on the test classpath, so the tests
+run on sine/cosine stand-in noise with a different distribution. That gap is what `/windfield stats`
+exists to fill.
+
+**Found by reading the code, now fixed.** `WindField` measures the terrain slope *along the base
+direction*, but orographic lift is driven by the **local** wind. During an inversion those two point
+opposite ways: if the hill rises toward `direction` while the local wind blows the other way, the air
+is actually descending and the code handed it lift anyway — a plain speed (a hypotenuse, always
+positive) left the sign resting on the terrain alone. `WindModel.alongBaseWind` now supplies the
+**signed component** of the local wind along the base axis, so the term turns negative exactly when
+the air has reversed and passes through zero continuously at the calm point instead of jumping.
+Covered by `anInvertedLocalWindTurnsRidgeLiftIntoSink`.
+
+**What that changes in normal flight — decided deliberately, and worth feeling before tuning.** The
+slope is measured in a single direction, so the model says the ground rises *that* way and the
+wind's cross-slope part climbs nothing; the old code multiplied by the whole speed anyway. Lift is
+now `slope × (total · û_base)` rather than `slope × |total|`, so it is always the same or smaller,
+never larger. Because the pressure field carries no directional bias (50% against the base, measured
+above), its projection averages out: ridge lift now rests on the prevailing wind plus an oscillation
+rather than on the total magnitude. That makes a good windward face steady in clear weather — a
+little weaker than before — and makes it flicker with sign in a storm, which is the same inversion
+physics already accepted above. If a windward slope feels feeble, raise `slopeStrength` (0.5); do not
+drop the projection to buy the magnitude back.
+
+**Known limitation in 1.0.0 — in a storm, with the wind inverted, the lee turbulence can end up on
+the wrong side of the crest.** `leeGustBoost` reads only the slope's sign on the base axis, so it
+credits its extra roughness to the face the wind is now *climbing*. It cannot take the same one-line
+fix: `leeBoost` is an **input** to `WindModel.evaluate` and is consumed where the gust amplitude is
+built, which is before the local wind exists. Doing it properly means passing the raw slope (and its
+height decay) into `evaluate` instead of the resolved boost, flipping it against the local wind
+there, and fading the flip the way the gust calm fade does — so that rotating through perpendicular
+does not pop the gust amplitude. That changes `evaluate`'s signature for every caller, and is
+deliberately left out of 1.0.0.
 
 The mixin side of 6.3 is already checked structurally: `Ventus 0.1.0` loads with no mixin errors
 against the full mod set, the two `@ModifyArg` hooks are untouched, and `physicsTick` returns at its
