@@ -87,7 +87,8 @@ public final class VentusConfig {
         FIELD_SCALE = builder
                 .comment("Map scale (blocks): the size of the largest wind structures.",
                         "Smaller values give more, tighter weather systems; larger values give broad,",
-                        "slowly-varying wind. The dominant direction is unaffected.")
+                        "slowly-varying wind. It resizes the systems and nothing else: the heading",
+                        "comes from 'direction', the strength from 'fieldStrength'.")
                 .defineInRange("fieldScale", 1500.0, 100.0, 100000.0);
 
         FIELD_PERIOD = builder
@@ -98,7 +99,10 @@ public final class VentusConfig {
         FIELD_STRENGTH = builder
                 .comment("Strength of the pressure-field perturbation, as a multiple of the base wind.",
                         "1.0 = the typical deflection is the same size as the base wind (the field",
-                        "noticeably turns and modulates it). 0.0 disables the field (base wind only).")
+                        "noticeably turns and modulates it). 0.0 disables the field (base wind only).",
+                        "Note that rain and thunder scale this perturbation but not the base wind, so",
+                        "in a storm the field can outweigh the base and point against 'direction'.",
+                        "'maxWindMultiplier' caps how large the total gets, not which way it blows.")
                 .defineInRange("fieldStrength", 1.0, 0.0, 5.0);
 
         MAX_WIND_MULTIPLIER = builder
@@ -129,8 +133,9 @@ public final class VentusConfig {
                 .comment("Strength the pressure field and the gusts reach at full rain, as a multiple of",
                         "their dry-weather strength. It is applied against the dimension's rain LEVEL,",
                         "which vanilla fades in and out over ~5 seconds, so the wind builds and eases",
-                        "instead of stepping. The base wind itself is not touched: rain roughens the air",
-                        "without changing the prevailing direction or its average strength.")
+                        "instead of stepping. The base wind itself is not touched. The perturbation it",
+                        "is added to does grow though, so at these multipliers the combined wind can",
+                        "end up pointing against the dimension's 'direction'.")
                 .defineInRange("rainMultiplier", 1.5, 1.0, 10.0);
 
         THUNDER_MULTIPLIER = builder

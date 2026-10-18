@@ -15,7 +15,9 @@ import org.joml.Vector3dc;
  * potential's gradient rotated by 90&deg; in the XZ plane, {@code (-dP/dz, dP/dx)}: rotating turns the
  * "downhill" gradient into a flow <em>along the isobars</em>, which is what a real wind does around a
  * pressure system. That perturbation is then added <em>on top of</em> the dimension's base wind, so the
- * prevailing direction always dominates and the field only deflects and modulates it.
+ * prevailing direction anchors the flow and the field deflects and modulates it. Note that anchoring is
+ * not a guarantee the heading wins: at the default {@code fieldStrength = 1} the typical deflection is
+ * already as large as the base, and weather scales the field but never the base (see below).
  * <p>
  * <b>Magnitude.</b> The raw noise gradient has an unpredictable magnitude, so it is scaled by
  * {@code base / GRAD_REFERENCE}. {@code GRAD_REFERENCE} is the measured mean of {@code |rotated
@@ -33,8 +35,10 @@ import org.joml.Vector3dc;
  * amplitude is a fraction of the base wind.
  * <p>
  * <b>Weather (stage 3).</b> A scalar {@code weather} multiplier (rain, then thunder) is applied to the
- * field and the gusts but never to the base wind, so a storm makes the air rougher without shifting
- * the prevailing direction or its average strength.
+ * field and the gusts but never to the base wind, so the configured prevailing flow itself is
+ * unchanged. The <em>total</em> can still turn: at storm strength the perturbation grows while the
+ * base does not, and the budget caps magnitude rather than heading, so a storm may blow the air
+ * against {@code direction}. That is accepted behaviour, not a bug - see the README.
  * <p>
  * <b>Vertical air (stage 4).</b> Thermals and orographic lift are <em>not</em> part of the pressure
  * potential: they are driven by the sun, the biome and the shape of the ground, so they are computed
