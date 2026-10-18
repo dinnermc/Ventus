@@ -185,6 +185,46 @@ class WindModelTest {
     }
 
     @Test
+    void anInvertedLocalWindTurnsRidgeLiftIntoSink() {
+        // The slope is measured along +base (here +X), so positive means the hill rises toward base.
+        final double slope = 0.2;
+
+        final double withTheWind = WindModel.alongBaseWind(3.0, 0.0, 3.0, 0.0);
+        final double against = WindModel.alongBaseWind(3.0, 0.0, -3.0, 0.0);
+        assertEquals(3.0, withTheWind, 1e-12);
+        assertEquals(-3.0, against, 1e-12);
+
+        // Air running as base does climbs that face: 3 m/s over ground rising 0.2 per block lifts
+        // the air at 0.6 m/s (speed x slope x strength), a number worked out here rather than read
+        // back out of the call under test.
+        assertEquals(0.6, WindModel.orographic(withTheWind, slope, 1.0), 1e-12);
+
+        // Same hill, same speed — the perturbations have only turned the air around, so it is now
+        // pouring off that face: -3 x 0.2 x 1 = -0.6, equal and opposite. An unsigned speed (a
+        // hypotenuse) would have reported lift in both columns, because the sign would come from
+        // the terrain alone.
+        assertEquals(-0.6, WindModel.orographic(against, slope, 1.0), 1e-12);
+
+        // Where the two cancel the component is zero, and it crosses zero rather than jumping.
+        assertEquals(0.0, WindModel.alongBaseWind(3.0, 0.0, 0.0, 0.0), 1e-12);
+        assertEquals(0.0,
+                WindModel.alongBaseWind(3.0, 0.0, 1e-6, 0.0)
+                        + WindModel.alongBaseWind(3.0, 0.0, -1e-6, 0.0),
+                1e-12);
+    }
+
+    @Test
+    void theAlongBaseWindComponentIsAProjectionOntoTheBaseDirection() {
+        // Aligned with a base of (3, 4): the whole length of the local wind, signed as the base is.
+        assertEquals(15.0, WindModel.alongBaseWind(3.0, 4.0, 9.0, 12.0), 1e-12);
+        assertEquals(-15.0, WindModel.alongBaseWind(3.0, 4.0, -9.0, -12.0), 1e-12);
+        // Perpendicular to it: the air crosses the measured axis without traversing it.
+        assertEquals(0.0, WindModel.alongBaseWind(3.0, 4.0, -4.0, 3.0), 1e-12);
+        // A base with no direction leaves no axis to project onto; the slope is NaN there anyway.
+        assertEquals(0.0, WindModel.alongBaseWind(0.0, 0.0, 7.0, -2.0), 0.0);
+    }
+
+    @Test
     void leeGustBoostIsOnlyForTheLeeSide() {
         // Windward and level ground get the smooth lift, no extra turbulence.
         assertEquals(0.0, WindModel.leeGustBoost(0.5, 2.0), 1e-12);

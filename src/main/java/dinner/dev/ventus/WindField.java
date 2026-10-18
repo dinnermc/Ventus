@@ -287,7 +287,9 @@ public final class WindField {
      * @param noise           the per-dimension noise set
      * @param level           the level, for the sun, the rain and the biome
      * @param worldPos        the sample point
-     * @param horizontalSpeed the XZ wind speed, which is what drives orographic lift
+     * @param horizontalSpeed the local wind's speed <em>along the base direction</em>, signed — see
+     *                        {@link WindModel#alongBaseWind}; a plain (unsigned) speed would lift the
+     *                        air on a hill it has reversed away from
      * @param slope           the terrain slope along the base wind, or {@code NaN} if unknown
      * @param decay           {@link WindModel#heightDecay} at this altitude, applied to the orographic
      *                        term only — a thermal exists because it rose, a ridge only lifts beside itself
@@ -442,7 +444,8 @@ public final class WindField {
                 level.getGameTime() / 20.0, dest, referenceMag, weatherMultiplier(level), leeBoost,
                 settings, MODEL_RESULT);
 
-        verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z),
+        verticalAt(noise, level, worldPos,
+                WindModel.alongBaseWind(dest.x(), dest.z(), MODEL_RESULT.total.x, MODEL_RESULT.total.z),
                 slope, decay, VERTICAL);
 
         // Ease the two terrain-derived terms towards their target: both are read from integer
@@ -549,7 +552,9 @@ public final class WindField {
                 level.getGameTime() / 20.0, dest.base, referenceMag, weather, leeBoost, settings,
                 MODEL_RESULT);
 
-        verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z),
+        verticalAt(noise, level, worldPos,
+                WindModel.alongBaseWind(dest.base.x(), dest.base.z(), MODEL_RESULT.total.x,
+                        MODEL_RESULT.total.z),
                 slope, decay, VERTICAL);
         dest.thermal = VERTICAL.thermal;
         dest.orographic = VERTICAL.orographic;

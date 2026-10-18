@@ -201,7 +201,10 @@ public final class WindModel {
      * <p>{@code strength} scales the physical value; {@code 1.0} is the real thing, lower values tame
      * Minecraft's blocky cliffs, higher ones exaggerate them.
      *
-     * @param horizontalSpeed the wind speed in the XZ plane, blocks/second
+     * @param horizontalSpeed the wind speed in the XZ plane, blocks/second, <b>signed along the
+     *                        direction {@code slope} was measured in</b> — see {@link #alongBaseWind}.
+     *                        An unsigned speed here would keep lifting the air on a face the wind has
+     *                        since reversed away from
      * @param slope           rise over run of the terrain along the wind direction (positive = the
      *                        wind is climbing, negative = it is descending)
      * @param strength        the configured multiplier
@@ -209,6 +212,32 @@ public final class WindModel {
      */
     public static double orographic(final double horizontalSpeed, final double slope, final double strength) {
         return horizontalSpeed * slope * strength;
+    }
+
+    /**
+     * The local wind's component <em>along the prevailing base wind</em>: positive when the air runs
+     * as the dimension's wind does, negative once the perturbations have turned it around, and zero
+     * exactly where they cancel it.
+     *
+     * <p>{@link #orographic} is {@code speed &times; slope}, and the slope is measured along the base
+     * direction, so a plain (unsigned) speed would make the sign depend on the terrain alone. This is
+     * the other half: it turns negative precisely when the air moves against the direction the slope
+     * was measured in, and it passes through zero continuously at the calm point instead of jumping.
+     *
+     * @param baseX  the prevailing wind's X (the axis the slope was measured along)
+     * @param baseZ  the prevailing wind's Z
+     * @param totalX the local wind's X (base + field + gust)
+     * @param totalZ the local wind's Z
+     * @return the local wind's speed along the base axis, signed; {@code 0} when the base has no
+     *         direction to speak of (the slope is {@code NaN} there anyway, so the term drops out)
+     */
+    public static double alongBaseWind(final double baseX, final double baseZ,
+            final double totalX, final double totalZ) {
+        final double length = Math.hypot(baseX, baseZ);
+        if (length == 0.0) {
+            return 0.0;
+        }
+        return (totalX * baseX + totalZ * baseZ) / length;
     }
 
     /**
