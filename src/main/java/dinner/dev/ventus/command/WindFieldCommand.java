@@ -49,6 +49,14 @@ public final class WindFieldCommand {
     private WindFieldCommand() {
     }
 
+    /**
+     * Hard ceiling on the samples one {@code stats} sweep may take. Every sample runs the full field
+     * (several noise evaluations plus config reads) on the <b>server thread</b>, so an unbounded
+     * radius/step pair would lock the game rather than just take a while: the argument ranges allow
+     * up to 4 million points. Rejected before the loop starts, with the count in the message.
+     */
+    private static final long MAX_SAMPLES = 65_000L;
+
     public static void register(final CommandDispatcher<CommandSourceStack> dispatcher) {
         // /windfield stats [radius] [step] - centred on the executing player.
         final LiteralArgumentBuilder<CommandSourceStack> stats = Commands.literal("stats")
@@ -152,6 +160,17 @@ public final class WindFieldCommand {
 
     private static int stats(final CommandSourceStack source, final Vector3d center, final int radius, final int step) {
         final ServerLevel level = source.getLevel();
+
+        final int perAxis = (2 * radius) / step + 1;
+        final long sampleCount = (long) perAxis * perAxis;
+        if (sampleCount > MAX_SAMPLES) {
+            source.sendFailure(Component.literal(String.format(Locale.ROOT,
+                    "[Ventus] %,d samples exceeds the %,d limit; run on the server thread, so a sweep this"
+                            + " size would freeze the game (radius %d, step %d). Raise the step or lower the"
+                            + " radius.",
+                    sampleCount, MAX_SAMPLES, radius, step)));
+            return 0;
+        }
 
         final WindField.Breakdown parts = new WindField.Breakdown();
 
