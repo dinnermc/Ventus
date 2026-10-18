@@ -1,0 +1,29 @@
+name: Bug report
+description: Something does not work as expected
+body:
+  - type: input
+    id: ventus
+    attributes:
+      label: Ventus version
+    validations:
+      required: true
+  - type: input
+    id: sable
+    attributes:
+      label: Sable and Create Aeronautics versions
+    validations:
+      required: true
+  - type: textarea
+    id: other
+    attributes:
+      label: Other wind or aerodynamics mods (or the Lift Patch)
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: latest.log (paste or attach)
