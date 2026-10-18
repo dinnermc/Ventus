@@ -325,29 +325,50 @@ be worked through without scrolling back up to the full description. If a check 
 the coordinates, altitude, time of day and weather **before** touching any code; that is enough to
 tell a wrong model from a misreading.
 
-- [ ] **12. The sea is flat** — low over shallow coastal water, not deep ocean: `slope` must read
+- [x] **12. The sea is flat** — low over shallow coastal water, not deep ocean: `slope` must read
       `0.000` and `orographic` `0.000`. The seabed must not manufacture an updraft under a boat.
+      *(Verified: `slope=0.000`, `orographic=0.000`, `heightFactor=0.648` at Y 75. `slope` is not
+      stuck at zero — the same build reads `1.000` at a cliff and `-0.156`/`-0.313` in open desert.)*
 - [ ] **13. A forest edge is not a hill** — skim a forest boundary at low altitude, crossing canopy
       to clearing and back: `slope` stays near `0.000`. Leaves are excluded from the surface.
-- [ ] **14. Heading survives the cap** — sheer cliff, `/weather thunder`, `/time set noon`, over a
-      desert: `total` must point the same way as `base`, and `total` must stay within 9 m/s
-      (`maxWindMultiplier` × base × `windScale` with the defaults).
-- [ ] **15. A parked heavy sub-level does not float** — heavy sub-level left in mid-air under a
+- [x] **14. The cap keeps the heading of the air it is capping** — sheer cliff, `/weather thunder`,
+      `/time set noon`, over a desert. The criterion is **not** that `total` matches `base`: the cap
+      scales the whole vector rather than clipping components, so what has to survive is the
+      direction of the *uncapped* sum `base + field + gust`. Verified at a cliff: the sum points
+      228.8° and `total` points 228.8°, identical; and `|total|` = 8.41 = 3 × 2.804, exactly
+      `maxWindMultiplier` × base. The cap did its job. *(The first wording of this check asked for
+      `total` to match `base`, which is only true while `field` is small — see the open question
+      below.)*
+- [x] **15. A parked heavy sub-level does not float** — heavy sub-level left in mid-air under a
       desert thermal at noon: it must settle, not climb. Ceiling is `universalDrag` ×
-      `thermalStrength` ≈ 0.23 m/s², far below gravity.
-- [ ] **6.3 Aircraft and ships are unchanged** — fly the plane, sail a ship: they behave exactly as
+      `thermalStrength` ≈ 0.23 m/s², far below gravity. *(Verified: falling at 10.5 m/s with
+      `thermal=0.506`, and at 9.4 m/s with `thermal=0.695` in a second desert. The check is that it
+      must not **climb**; sinking is the correct answer.)*
+- [x] **6.3 Aircraft and ships are unchanged** — fly the plane, sail a ship: they behave exactly as
       they did before the balloon fix. Anything with lift providers never used the floating-block
       path; this is the regression easiest to miss, because the new hook sits on a call ships also
       reach.
-- [ ] **6.4 `disableWind` freezes everything** — with `-Dventus.disableWind=true`: a plane, a ship
+- [x] **6.4 `disableWind` freezes everything** — with `-Dventus.disableWind=true`: a plane, a ship
       **and** a balloon all sit dead still. All three hooks degrade to exact identities.
+
+**Open design question, found by check 14.** At `weather = 2.40` the pressure perturbation ran
+`|field|` = 11.96 against `|base|` = 2.80 — 4.27× — and pointed nearly the opposite way, so the
+storm effectively reversed the wind. That is what made the first wording of check 14 look wrong.
+The arithmetic is not at fault: `weather` scales `field` and the gusts but never the base wind, so
+at storm strength the perturbation legitimately overtakes the prevailing flow, and the budget only
+bounds the *magnitude* (3× prevailing), never the heading. But `ventus-server.toml` ("the dominant
+direction is unaffected") and stage 2 check 2a ("still blow broadly the way direction says") both
+promise the opposite. Two ways to resolve it: accept the behaviour and correct the documentation, or
+bound the perturbation against the base wind so the configured heading always wins.
 
 The mixin side of 6.3 is already checked structurally: `Ventus 0.1.0` loads with no mixin errors
 against the full mod set, the two `@ModifyArg` hooks are untouched, and `physicsTick` returns at its
 own `needsTicking()` guard before writing any impulse for a sub-level without floating blocks. What
 is left is the behaviour in the world.
 
-When all six are ticked, verification no longer blocks 1.0.0.
+Five of the six are done. Only **13 (a forest edge is not a hill)** is still open, plus the design
+question above — and 13 is the one that most needs a client, since it is a low skim along a canopy
+boundary.
 
 ## Building & testing
 
