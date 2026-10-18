@@ -278,7 +278,31 @@ Stage 5 checks:
    to 3 × the local prevailing wind (about 42 m/s with the defaults) rather than the 9 m/s available
    at sea level, because the cap is a ceiling scaled to the air actually blowing here. The **vertical**
    terms are the exception: `thermal` and `orographic` are not scaled by the jet, since a jet is
-   horizontal wind.
+    horizontal wind.
+
+Stage 6 checks:
+
+1. **A balloon drifts with the wind (6)** — build a floating-block balloon and rise above `fadeHeight`
+   (32 blocks), where the `surfaceCalm` ramp no longer holds it down, then let it sit still. It must
+   accelerate downwind and settle at the local wind speed. Give it ~10 s: the coupling rides on
+   `universalDrag` (`d = 0.09`, time constant ~11 s), so nothing visible happens in the first second.
+   With `-Dventus.debugWind=true` the line `[ventus] floating-pass` proves the hook is live — if it
+   never appears, the sub-level is not entering `prePhysicsTick` at all.
+2. **The balloon catches the wind with its own friction (6)** — the drift has to come from the
+   floating material's friction, which without the fix was a brake towards `v = 0` cancelling the
+   `mass * d * w * dt` coupling that pulls towards `v = w`. Ventus adds no size term of its own, so a
+   large light balloon and a small dense one both converge on the wind speed, the big one visibly
+   faster because its friction coefficients are its sail area.
+3. **Aircraft and ships are unchanged (6)** — fly the plane and sail a ship. Anything with lift
+   providers takes the two `contributeLiftAndDrag` passes and never relied on the floating-block path;
+   `physicsTick` is still called for it (the redirect wraps every call) but returns at its own
+   `needsTicking()` guard before writing a single impulse, so the output is identical. This is the
+   regression that is easiest to miss, because the new hook sits on a call that ships also reach.
+4. **`disableWind` still freezes everything (6)** — with `-Dventus.disableWind=true` a plane, a ship
+   and a balloon must all sit dead still. The chain is: `isCalm()` short-circuits `WindSampler` before
+   it samples anything, `sample()` would write zeros anyway, `airRelative` returns its input unchanged
+   when the wind is zero (so no allocation either), and `ventus$windDrag` bails on
+   `lengthSquared() == 0`. All three hooks degrade to exact identities.
 
 Client checks:
 
@@ -323,13 +347,33 @@ later stages against.
 4. **Tick mean and p99, with and without, is the number.** The same pair is taken again after any
    later stage, and the delta between the two pairs is the useful figure — a single absolute number
    on its own says nothing, because Sable, Create and the world dominate it.
+5. **Stage 6 wants a second shape of world: balloons.** `WindField.airRelative` allocates a
+   `Vector3d` whenever the wind is non-zero, and stage 6 put a call on the floating-block pass —
+   once per sub-level per physics sub-step. Ships reach that redirect too, since it wraps the call
+   and only the controller's own `needsTicking()` guard stops it doing any work, so the fleet run
+   already samples the cost; but a handful of balloons is the world that actually exercises it.
+   Take the same mean/p99 pair over balloons and compare it against the ship run. If the delta is
+   visible, the vector has to stop being allocated.
 
 ## How the hook works
 
-- `ServerSubLevelWindMixin` targets `ServerSubLevel.prePhysicsTick` and rewrites (via `@ModifyArg`)
-  the `linearVelocity` argument of the two `BlockSubLevelLiftProvider.sable$contributeLiftAndDrag`
-  call sites to the air-relative velocity. The argument is read-only, so only the forces derived
-  from it change.
+- `ServerSubLevelWindMixin` targets `ServerSubLevel.prePhysicsTick` and rewrites the
+  `linearVelocity` argument at the three places that turn a body velocity into a force, handing each
+  the air-relative velocity. Two are the `BlockSubLevelLiftProvider.sable$contributeLiftAndDrag` call
+  sites (ships, sails, anything with lift providers), rewritten with `@ModifyArg`. The third is
+  `FloatingBlockController.physicsTick` (balloons and any sub-level made of floating blocks), wrapped
+  with `@Redirect` — two `double` parameters precede the velocity there, so its argument index differs
+  from the other target and a `@ModifyArg` would be easy to miscount. The argument is read-only, so
+  only the forces derived from it change.
+- The floating-block pass is what makes a balloon drift at all. `FloatingBlockController.applyFriction`
+  opposes the body velocity *in world space*, which pulls a balloon towards `v = 0` and cancels the
+  coupling below; the two neutralise each other and it never moves. Handed `v - w` instead, the very
+  same friction becomes a sail — zero exactly at `v = w`, pushing downwind from rest — with the
+  floating material's own coefficients as its area. Nothing in Ventus scales with balloon size.
+- **Before publishing:** move that third pass from `@Redirect` to `@WrapOperation`. A `@Redirect` owns
+  the call site outright, so if any other mod redirects the same `physicsTick` invocation the two
+  mixins conflict and the game refuses to start; `@WrapOperation` composes with them instead. NeoForge
+  21.1 already bundles MixinExtras, so this needs no new dependency.
 - The mixin implements `WindCarrier` to expose its `@Unique` wind state to `WindSampler` (the wind
   vector, the last height factor, and the first-sample time). The state is written by `WindSampler`
   and read by the hooks, both on the server thread, so no synchronisation is needed.

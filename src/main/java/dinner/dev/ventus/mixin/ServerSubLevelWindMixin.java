@@ -4,6 +4,7 @@ import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
+import dev.ryanhcode.sable.physics.floating_block.FloatingBlockController;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
 import dinner.dev.ventus.Ventus;
@@ -16,15 +17,17 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Locale;
 
 /**
  * Feeds Sable's lift &amp; drag the velocity of a sub-level <em>relative to the air</em> instead
- * of relative to the world, by rewriting the {@code linearVelocity} argument of the two
- * {@code BlockSubLevelLiftProvider.sable$contributeLiftAndDrag} calls in
- * {@code ServerSubLevel.prePhysicsTick}.
+ * of relative to the world, at the three places in {@code ServerSubLevel.prePhysicsTick} that turn
+ * a body velocity into a force: the two {@code BlockSubLevelLiftProvider.sable$contributeLiftAndDrag}
+ * calls (ships, sails, anything with lift providers) and the
+ * {@code FloatingBlockController.physicsTick} call (balloons and other floating-block sub-levels).
  * <p>
  * Why this call site: the providers compute their aerodynamic forces from the velocity they are
  * handed, so removing the wind makes a flying sub-level accelerate until it matches the air speed.
@@ -62,10 +65,19 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
                     + "Lorg/joml/Vector3d;"
                     + "Ldev/ryanhcode/sable/api/block/BlockSubLevelLiftProvider$LiftProviderGroup;)V";
 
+    private static final String FLOATING_PHYSICS_TICK =
+            "Ldev/ryanhcode/sable/physics/floating_block/FloatingBlockController;physicsTick("
+                    + "D"
+                    + "D"
+                    + "Lorg/joml/Vector3dc;"
+                    + "Lorg/joml/Vector3dc;"
+                    + "Lorg/joml/Vector3d;"
+                    + "Lorg/joml/Vector3d;)V";
+
     private static final int LINEAR_VELOCITY_ARG = 4;
 
     private static final boolean DEBUG_WIND = Boolean.getBoolean("ventus.debugWind");
-    private static final long[] ventus$debugNext = new long[3];
+    private static final long[] ventus$debugNext = new long[4];
     private static boolean ventus$hookThreadLogged;
 
     // Wind state, written once per tick by WindSampler. Left uninitialised on purpose: the JVM
@@ -171,6 +183,46 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
                     ventus$v(wind), ventus$v(linearVelocity), ventus$v(air));
         }
         return air;
+    }
+
+    /**
+     * The floating-block pass: balloons, rafts and any sub-level made only of floating blocks.
+     * <p>
+     * These have no {@link BlockSubLevelLiftProvider}s, so they never reach either call above.
+     * They are driven by {@code FloatingBlockController.physicsTick}, whose
+     * {@code applyFriction} opposes the body velocity <em>in world space</em>. Left as is, that
+     * friction is a brake pulling the body toward {@code v = 0}, and it cancels the
+     * {@code mass * d * w * dt} coupling at HEAD, which pulls toward {@code v = w}. The two
+     * neutralise each other and the balloon never drifts.
+     * <p>
+     * Handing the controller the air-relative velocity turns the very same friction into a sail:
+     * it damps {@code v - w}, which is zero exactly when the sub-level moves with the air, and
+     * which pushes the body downwind when it is standing still. The material's friction
+     * coefficients become the size of the sail, so a big light balloon catches far more wind than
+     * a small dense one, without any new tuning.
+     * <p>
+     * Only the linear component is rewritten; angular velocity stays in world space, matching what
+     * the two lift-provider passes do. {@code linearImpulse} and {@code angularImpulse} are passed
+     * straight through untouched, so the controller still writes its lift and friction into them.
+     * <p>
+     * Redirect instead of {@code @ModifyArg} on purpose: two {@code double} parameters precede the
+     * velocity here, so the argument index differs from the lift-provider target and is easy to get
+     * wrong. A redirect binds the call's parameters by type and cannot be miscounted.
+     */
+    @Redirect(
+            method = PRE_PHYSICS_TICK,
+            at = @At(value = "INVOKE", target = FLOATING_PHYSICS_TICK)
+    )
+    private void ventus$windOnFloatingBlocks(final FloatingBlockController controller,
+            final double partialPhysicsTick, final double timeStep, final Vector3dc linearVelocity,
+            final Vector3dc angularVelocity, final Vector3d linearImpulse, final Vector3d angularImpulse) {
+        final Vector3dc wind = this.ventus$wind();
+        final Vector3dc air = WindField.airRelative(linearVelocity, wind);
+        if (ventus$debugDue(3)) {
+            Ventus.LOGGER.info("[ventus] floating-pass wind={} vel={} -> air={}",
+                    ventus$v(wind), ventus$v(linearVelocity), ventus$v(air));
+        }
+        controller.physicsTick(partialPhysicsTick, timeStep, air, angularVelocity, linearImpulse, angularImpulse);
     }
 
     /**
