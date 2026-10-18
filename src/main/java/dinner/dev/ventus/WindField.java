@@ -507,6 +507,14 @@ public final class WindField {
         dest.shear = 1.0;
         dest.shearDegrees = 0.0;
 
+        // Both heightmaps of the sample column, read before anything can return early: /windfield
+        // info reports them verbatim, so the ground the terrain terms use and the floor the height
+        // profile uses can be compared directly instead of being worked back out of other numbers.
+        final int columnX = Mth.floor(worldPos.x());
+        final int columnZ = Mth.floor(worldPos.z());
+        dest.groundHeight = surfaceAt(level, columnX, columnZ);
+        dest.floorHeight = columnAt(level, columnX, columnZ, Heightmap.Types.OCEAN_FLOOR);
+
         if (!ENABLED) {
             return dest;
         }
@@ -538,7 +546,7 @@ public final class WindField {
         dest.weather = weather;
 
         final WindModel.Settings settings = VentusConfig.windModelSettings();
-        final double terrain = surfaceAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
+        final double terrain = dest.groundHeight;
         final double decay = Double.isNaN(terrain)
                 ? 1.0 : WindModel.heightDecay(worldPos.y() - terrain, VentusConfig.slopeHeightFalloff());
 
@@ -593,6 +601,19 @@ public final class WindField {
         public double shear;
         /** How far the wind's heading has turned at this altitude, in degrees (stage 5). */
         public double shearDegrees;
+        /**
+         * The ground height under the sample point, or {@code NaN} when its chunk is not loaded.
+         * {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES} — what {@link #slope} is measured from.
+         */
+        public double groundHeight;
+        /**
+         * The same column read as {@link Heightmap.Types#OCEAN_FLOOR}, or {@code NaN} when its chunk
+         * is not loaded: leaves counted, liquids not. What {@link #heightFactor} ramps from.
+         *
+         * <p>The two differ by exactly the canopy where there is one, and agree where there is not.
+         * {@code /windfield info} prints both so that gap is visible instead of inferred.
+         */
+        public double floorHeight;
         public boolean capped;
 
         /** Copies {@link #total} into {@code dest} and returns it. */

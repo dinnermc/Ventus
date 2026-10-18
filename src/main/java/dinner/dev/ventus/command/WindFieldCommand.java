@@ -43,7 +43,9 @@ import java.util.Locale;
  * When there is no sub-level at the sampled position the command still reports the field itself —
  * base, field, gust, height factor, slope, thermal and orographic — because those are properties of
  * the position. That makes it usable to walk or fly around sampling biomes and slopes without being
- * aboard anything.
+ * aboard anything. Both column heights are reported with them ({@code groundHeight} with leaves
+ * excluded, {@code floorHeight} with leaves included), so a forest edge can be told apart from a
+ * hill without working the canopy height back out of the other numbers.
  */
 public final class WindFieldCommand {
     private WindFieldCommand() {
@@ -312,6 +314,8 @@ public final class WindFieldCommand {
                 "  heightFactor=%.3f  weather=%.2f  capped=%s%n"
                         + "  y=%.1f  jet=%.2fx  shear=%.2fx  turn=%.1f deg%n"
                         + "  slope=%s  leeBoost=%.2f%n"
+                        + "  groundHeight=%s  (surfaceAt, leaves excluded)%n"
+                        + "  floorHeight=%s  (OCEAN_FLOOR, leaves included)%n"
                         + "  thermal=%.3f  orographic=%.3f%n"
                         + "  base=(%.3f, %.3f, %.3f)%n"
                         + "  field=(%.3f, %.3f, %.3f)%n"
@@ -321,6 +325,10 @@ public final class WindFieldCommand {
                 altitude, parts.jet, parts.shear, parts.shearDegrees,
                 Double.isNaN(parts.slope) ? "n/a" : String.format(Locale.ROOT, "%.3f", parts.slope),
                 parts.leeBoost,
+                Double.isNaN(parts.groundHeight) ? "n/a"
+                        : String.format(Locale.ROOT, "%.1f", parts.groundHeight),
+                Double.isNaN(parts.floorHeight) ? "n/a"
+                        : String.format(Locale.ROOT, "%.1f", parts.floorHeight),
                 parts.thermal, parts.orographic,
                 parts.base.x, parts.base.y, parts.base.z,
                 parts.field.x, parts.field.y, parts.field.z,
