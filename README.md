@@ -48,6 +48,16 @@ storm behaviour that can turn the wind back on itself).
 - Source and issues: <https://github.com/dinnermc/Ventus>
 - Release notes: [`CHANGELOG.md`](CHANGELOG.md)
 
+## Credits
+
+Sable sub-level physics by [RyanHCode](https://github.com/ryanhcode); the mod and the docs by
+dinner. Ventus is an unofficial addon — it is not affiliated with Sable, Create or Create
+Aeronautics.
+
 ## License
 
 Apache License 2.0. See `LICENSE`.
+
+[![Modrinth](https://img.shields.io/modrinth/v/ventus-mod?label=Modrinth&color=00AF5C)](https://modrinth.com/mod/ventus-mod)
+[![Build](https://github.com/dinnermc/Ventus/actions/workflows/build.yml/badge.svg)](https://github.com/dinnermc/Ventus/actions/workflows/build.yml)
+[![License](https://img.shields.io/github/license/dinnermc/Ventus)](LICENSE)

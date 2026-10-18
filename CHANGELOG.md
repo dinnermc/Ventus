@@ -54,9 +54,9 @@ read one per-dimension vector instead of the vanilla still air.
   until something else changes it. The levels ease in over ~5 seconds, so the wind builds as it does
   in a real storm.
 
-### Verification
+### Testing
 
-- Every check in README *Verification for 1.0.0* is ticked, with the readings recorded — including
+- All the 1.0.0 checks were run against a live server with the readings written down — including
   the two added for `enabled` and for `set`/`storm`.
 - 52 unit tests, all passing.
 
@@ -72,7 +72,8 @@ read one per-dimension vector instead of the vanilla still air.
   everywhere: sub-levels drift nowhere, the commands still answer and read zero, and the HUD
   disappears. Hot-reloaded like everything else, so a server that already gets its weather from
   another mod can turn Ventus off in a second — no launch arguments, no uninstalling the jar.
-- The whole key set is frozen: 37 names, defaults and ranges, listed in README *Frozen keys (1.0.0)*.
+- The whole key set is frozen: 37 names, defaults and ranges, listed in the wiki's Configuration
+  page.
   New keys may still appear inside 1.x; existing ones will not be renamed or retuned.
 
 ### Requirements

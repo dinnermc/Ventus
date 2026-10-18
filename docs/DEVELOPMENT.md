@@ -53,7 +53,7 @@ Height profile checks (use `/windfield info` for live values):
 4. **Fade-in** — reload the world with a plane already airborne: the wind climbs from zero to full
    over ~5 s instead of appearing at once.
 5. **On the ground** — a parked plane no longer slides or weathervanes (near-zero wind at the surface).
-6. **Dedicated server** — works with and without the client patch (the patch is client-optional).
+6. **Dedicated server** — behaves the same whether or not the connecting player has Ventus.
 
 `-Pventus.debugWind=true` logs the sampler and hook threads once each (they should both read
 `Server thread`) plus rate-limited wind values.
@@ -237,7 +237,7 @@ Configuration checks:
    because the default `vec3()` snaps whole numbers to a block centre and would turn `10 0 0` into
    `(10.5, 0, 0.5)`.
 
-## Findings from the 1.0.0 verification
+## Notes from the 1.0.0 test run
 
 **The storm can reverse the wind — decided, and accepted.** At `weather = 2.40` the
 pressure perturbation ran `|field|` = 11.96 against `|base|` = 2.80 — 4.27× — and pointed nearly the
