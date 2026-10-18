@@ -463,7 +463,7 @@ there, and fading the flip the way the gust calm fade does — so that rotating 
 does not pop the gust amplitude. That changes `evaluate`'s signature for every caller, and is
 deliberately left out of 1.0.0.
 
-The mixin side of 6.3 is already checked structurally: `Ventus 0.1.0` loads with no mixin errors
+The mixin side of 6.3 is already checked structurally: the mod loads with no mixin errors
 against the full mod set, the two `@ModifyArg` hooks are untouched, and `physicsTick` returns at its
 own `needsTicking()` guard before writing any impulse for a sub-level without floating blocks. What
 is left is the behaviour in the world.
@@ -539,3 +539,7 @@ later stages against.
 Because the hooks are injected into the concrete caller rather than the `BlockSubLevelLiftProvider`
 interface (which Mixin cannot inject into without `@Overwrite`), Ventus pins the Sable dependency to
 the `2.0.x` line — see `sable_version_range` in `gradle.properties`.
+
+## License
+
+Apache License 2.0. See `LICENSE`. Release notes are in `CHANGELOG.md`.
