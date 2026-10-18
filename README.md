@@ -315,7 +315,39 @@ Client checks:
 4. **The compass tracks the shear** — climb from sea level to the jet core: the needle must sweep
    smoothly through the ~33° of turn the defaults give, and the speed figure must climb into the high
    teens. The fade and the jet are both smooth, so there is nothing for the needle to step on at
-   `fadeHeight` or at the edge of the band.
+    `fadeHeight` or at the edge of the band.
+
+## Verification for 1.0.0
+
+The checks that are still open, in the order to run them. Tick one only after you have actually
+seen the value with `/windfield info` open — the expected figure is repeated here so the list can
+be worked through without scrolling back up to the full description. If a check fails, write down
+the coordinates, altitude, time of day and weather **before** touching any code; that is enough to
+tell a wrong model from a misreading.
+
+- [ ] **12. The sea is flat** — low over shallow coastal water, not deep ocean: `slope` must read
+      `0.000` and `orographic` `0.000`. The seabed must not manufacture an updraft under a boat.
+- [ ] **13. A forest edge is not a hill** — skim a forest boundary at low altitude, crossing canopy
+      to clearing and back: `slope` stays near `0.000`. Leaves are excluded from the surface.
+- [ ] **14. Heading survives the cap** — sheer cliff, `/weather thunder`, `/time set noon`, over a
+      desert: `total` must point the same way as `base`, and `total` must stay within 9 m/s
+      (`maxWindMultiplier` × base × `windScale` with the defaults).
+- [ ] **15. A parked heavy sub-level does not float** — heavy sub-level left in mid-air under a
+      desert thermal at noon: it must settle, not climb. Ceiling is `universalDrag` ×
+      `thermalStrength` ≈ 0.23 m/s², far below gravity.
+- [ ] **6.3 Aircraft and ships are unchanged** — fly the plane, sail a ship: they behave exactly as
+      they did before the balloon fix. Anything with lift providers never used the floating-block
+      path; this is the regression easiest to miss, because the new hook sits on a call ships also
+      reach.
+- [ ] **6.4 `disableWind` freezes everything** — with `-Dventus.disableWind=true`: a plane, a ship
+      **and** a balloon all sit dead still. All three hooks degrade to exact identities.
+
+The mixin side of 6.3 is already checked structurally: `Ventus 0.1.0` loads with no mixin errors
+against the full mod set, the two `@ModifyArg` hooks are untouched, and `physicsTick` returns at its
+own `needsTicking()` guard before writing any impulse for a sub-level without floating blocks. What
+is left is the behaviour in the world.
+
+When all six are ticked, verification no longer blocks 1.0.0.
 
 ## Building & testing
 
