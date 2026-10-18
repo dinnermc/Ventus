@@ -1,5 +1,7 @@
 package dinner.dev.ventus;
 
+import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import dinner.dev.ventus.network.WindSyncPayload;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,10 +14,23 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import org.joml.Vector3d;
 
 /**
- * Sends each player the wind at their own eye position so the client HUD has something to draw. The
- * value comes straight from {@link WindField#sampleAt}, i.e. the same field the physics hooks use,
- * evaluated at the player rather than at a sub-level (there is no height fade-in or temporal ramp here
- * — the HUD shows the steady state).
+ * Sends each player the wind so the client HUD has something to draw, as the wind that player
+ * actually feels:
+ *
+ * <ul>
+ *     <li>standing in the world — {@link WindField#sampleAt} at the eye position, the same field
+ *     the physics hooks use, evaluated at the player rather than at a sub-level (there is no height
+ *     fade-in or temporal ramp on this path — the HUD shows the steady state);</li>
+ *     <li>standing in, riding or tracking a Sable sub-level — the vector that sub-level was
+ *     actually given this tick, {@link WindCarrier#ventus$wind()}. Same lookup
+ *     {@code /windfield info} uses, so the two always agree, and the reading carries the ramp-in
+ *     and the smoothing the vehicle really is subject to.</li>
+ * </ul>
+ *
+ * <p>Aboard a vehicle the eye position is the wrong place to sample: it is a point in the world
+ * around the plane, not the air the plane is in, and the client cannot tell the two apart. The
+ * instrument therefore has to read the vehicle, which already has the answer. While aboard,
+ * {@code hudWind} printed by {@code /windfield info} should now match that sub-level's `wind`.
  *
  * <p>The client cannot evaluate this field itself: the noise is seeded from the world seed, which only
  * the server has. So the value is pushed, and it is pushed sparingly — a player who is standing still
@@ -56,19 +71,46 @@ public final class WindHudSync {
         }
 
         for (final ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
-            final Vec3 eye = player.getEyePosition();
-            SAMPLE_POINT.set(eye.x, eye.y, eye.z);
-            WindField.sampleAt(player.serverLevel(), SAMPLE_POINT, RESULT);
+            final SubLevel subLevel = subLevelFor(player);
+            final Vector3d wind;
+            if (subLevel instanceof final WindCarrier carrier) {
+                // aboard something: the air the vehicle is in, already sampled for it this tick
+                wind = carrier.ventus$wind();
+            } else {
+                final Vec3 eye = player.getEyePosition();
+                SAMPLE_POINT.set(eye.x, eye.y, eye.z);
+                wind = WindField.sampleAt(player.serverLevel(), SAMPLE_POINT, RESULT);
+            }
 
             final Sent previous = LAST_SENT.get(player.getUUID());
-            if (previous != null && previous.closeTo(RESULT.x, RESULT.y, RESULT.z)) {
+            if (previous != null && previous.closeTo(wind.x, wind.y, wind.z)) {
                 continue;
             }
 
-            final Sent current = new Sent((float) RESULT.x, (float) RESULT.y, (float) RESULT.z);
+            final Sent current = new Sent((float) wind.x, (float) wind.y, (float) wind.z);
             LAST_SENT.put(player.getUUID(), current);
             PacketDistributor.sendToPlayer(player, new WindSyncPayload(current.x(), current.y(), current.z()));
         }
+    }
+
+    /**
+     * The sub-level this player is standing in, riding, or tracking — deliberately the same lookup
+     * {@code /windfield info} uses, so the instrument and the command can never disagree about
+     * which sub-level is meant.
+     */
+    private static SubLevel subLevelFor(final ServerPlayer player) {
+        final SubLevel tracking = Sable.HELPER.getTrackingOrVehicleSubLevel(player);
+        return tracking != null ? tracking : Sable.HELPER.getContaining(player);
+    }
+
+    /**
+     * The wind this player's HUD was last sent, or {@code null} if nothing has been sent yet.
+     * Public so {@code /windfield info} can show it next to the wind the sub-level has, and the two
+     * can be compared.
+     */
+    public static Vec3 lastSentTo(final Player player) {
+        final Sent sent = LAST_SENT.get(player.getUUID());
+        return sent == null ? null : new Vec3(sent.x, sent.y, sent.z);
     }
 
     /** Drops the remembered value for a leaving player so the map does not grow with join count. */

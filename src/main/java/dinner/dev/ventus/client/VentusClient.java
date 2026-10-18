@@ -41,8 +41,8 @@ public final class VentusClient {
         });
     }
 
-    /** Whether the compass is currently showing (toggled with {@link #toggleCompass}). */
-    public static boolean compassVisible() {
+    /** Whether the wind line is currently showing (toggled with {@link #toggleCompass}). */
+    public static boolean windLineVisible() {
         return compassVisible;
     }
 

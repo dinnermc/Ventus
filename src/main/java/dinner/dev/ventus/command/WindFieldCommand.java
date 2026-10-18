@@ -9,8 +9,10 @@ import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import dinner.dev.ventus.VentusConfig;
 import dinner.dev.ventus.WindCarrier;
 import dinner.dev.ventus.WindField;
+import dinner.dev.ventus.WindHudSync;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.Coordinates;
@@ -46,6 +48,11 @@ import java.util.Locale;
  * aboard anything. Both column heights are reported with them ({@code groundHeight} with leaves
  * excluded, {@code floorHeight} with leaves included), so a forest edge can be told apart from a
  * hill without working the canopy height back out of the other numbers.
+ * <p>
+ * {@code /windfield set} forces this dimension's <em>base</em> wind to a vector for the running
+ * session, and {@code /windfield storm} sets its weather. Neither is written to the config, so both
+ * die with the server; together they let an admin (or a video shoot) dial in a known wind without
+ * editing a file or waiting for the weather to turn.
  */
 public final class WindFieldCommand {
     private WindFieldCommand() {
@@ -58,6 +65,13 @@ public final class WindFieldCommand {
      * up to 4 million points. Rejected before the loop starts, with the count in the message.
      */
     private static final long MAX_SAMPLES = 65_000L;
+
+    /** The three weather presets {@code /windfield storm} can ask for. */
+    private enum Weather {
+        CLEAR,
+        RAIN,
+        STORM
+    }
 
     public static void register(final CommandDispatcher<CommandSourceStack> dispatcher) {
         // /windfield stats [radius] [step] - centred on the executing player.
@@ -87,6 +101,24 @@ public final class WindFieldCommand {
                                                 IntegerArgumentType.getInteger(context, "radius"),
                                                 IntegerArgumentType.getInteger(context, "step")))));
 
+        // /windfield set [clear | <wind>] - force this dimension's base wind, for this session only.
+        // Bare, it reports what is in force, so nobody has to remember whether they set one.
+        final LiteralArgumentBuilder<CommandSourceStack> set = Commands.literal("set")
+                .executes(context -> setReport(context.getSource()))
+                .then(Commands.literal("clear")
+                        .executes(context -> setClear(context.getSource())))
+                .then(Commands.argument("wind", Vec3Argument.vec3(false))
+                        .executes(context -> setWind(context.getSource(),
+                                Vec3Argument.getVec3(context, "wind"))));
+
+        // /windfield storm [clear | rain] - bare means a full storm, which is the one people want.
+        final LiteralArgumentBuilder<CommandSourceStack> storm = Commands.literal("storm")
+                .executes(context -> storm(context.getSource(), Weather.STORM))
+                .then(Commands.literal("clear")
+                        .executes(context -> storm(context.getSource(), Weather.CLEAR)))
+                .then(Commands.literal("rain")
+                        .executes(context -> storm(context.getSource(), Weather.RAIN)));
+
         dispatcher.register(Commands.literal("windfield")
                 .requires(source -> source.hasPermission(2))
                 .then(Commands.literal("info")
@@ -94,7 +126,9 @@ public final class WindFieldCommand {
                         .then(Commands.argument("pos", Vec3Argument.vec3())
                                 .executes(context -> infoPosition(context.getSource(),
                                         Vec3Argument.getVec3(context, "pos")))))
-                .then(stats.then(Commands.literal("at").then(atPosition))));
+                .then(stats.then(Commands.literal("at").then(atPosition)))
+                .then(set)
+                .then(storm));
     }
 
     private static int infoPlayer(final CommandSourceStack source) {
@@ -112,7 +146,21 @@ public final class WindFieldCommand {
         final SubLevel tracking = Sable.HELPER.getTrackingOrVehicleSubLevel(player);
         final SubLevel subLevel = tracking != null ? tracking : Sable.HELPER.getContaining(player);
 
-        return report(source, player.serverLevel(), worldPos, subLevel);
+        final int result = report(source, player.serverLevel(), worldPos, subLevel);
+
+        // What the client HUD is actually being fed, for comparison with the wind above. If the two
+        // disagree while aboard, the HUD is sampling somewhere other than the vehicle.
+        final Vec3 eye = player.getEyePosition();
+        final Vec3 hudWind = WindHudSync.lastSentTo(player);
+        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "[Ventus] hud level=%s  hudEye=(%.1f, %.1f, %.1f)%n"
+                        + "  hudWind=%s",
+                player.serverLevel().dimension().location(), eye.x, eye.y, eye.z,
+                hudWind == null
+                        ? "not sent yet"
+                        : String.format(Locale.ROOT, "(%.3f, %.3f, %.3f)",
+                                hudWind.x, hudWind.y, hudWind.z))), false);
+        return result;
     }
 
     private static int infoPosition(final CommandSourceStack source, final Vec3 pos) {
@@ -120,6 +168,109 @@ public final class WindFieldCommand {
         final Vector3d worldPos = new Vector3d(pos.x, pos.y, pos.z);
         final SubLevel subLevel = Sable.HELPER.getContaining(level, worldPos);
         return report(source, level, worldPos, subLevel);
+    }
+
+    /** {@code /windfield set} — reports the override in force for the executing dimension. */
+    private static int setReport(final CommandSourceStack source) {
+        final ServerLevel level = source.getLevel();
+        final Vector3d override = WindField.baseOverride(level.dimension());
+
+        if (override != null) {
+            source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                    "[Ventus] %s base wind is forced to (%.3f, %.3f, %.3f) for this session."
+                            + " /windfield set clear puts the config back in charge.",
+                    level.dimension().location(), override.x, override.y, override.z)), false);
+            return 1;
+        }
+
+        final Vector3d configured = new Vector3d();
+        VentusConfig.baseWind(level.dimension(), configured);
+        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "[Ventus] %s has no override; its base wind comes from ventus-server.toml:"
+                        + " (%.3f, %.3f, %.3f)",
+                level.dimension().location(), configured.x, configured.y, configured.z)), false);
+        return 1;
+    }
+
+    /**
+     * {@code /windfield set <wind>} — forces this dimension's <em>base</em> wind to the vector.
+     * <p>
+     * The vector argument is {@code vec3(false)}, not the default {@code vec3()}: the default snaps
+     * whole numbers to the centre of that block (+0.5 on X and Z), which is right for a position and
+     * wrong for a velocity — {@code 10 0 0} has to mean ten metres a second east, not 10.5.
+     * <p>
+     * Only the configured {@code [dimensions]} entry is replaced: the pressure field, the gusts, the
+     * weather scaling and the whole altitude profile are still applied on top, so an override reads
+     * like a real wind rather than a fixed vector bolted into the physics. Everything that samples
+     * the base wind goes through {@link WindField#baseWind}, so the command, the HUD and the
+     * sub-levels cannot disagree about it.
+     */
+    private static int setWind(final CommandSourceStack source, final Vec3 wind) {
+        final ServerLevel level = source.getLevel();
+        WindField.setBaseOverride(level.dimension(), new Vector3d(wind.x, wind.y, wind.z));
+
+        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "[Ventus] %s base wind forced to (%.3f, %.3f, %.3f) for this session.%s The pressure"
+                        + " field, gusts, weather and altitude profile still apply on top of it.",
+                level.dimension().location(), wind.x, wind.y, wind.z,
+                wind.y == 0.0
+                        ? ""
+                        : " Note: the configured base winds are horizontal; a vertical component is"
+                                + " kept as it is, not discarded.")), false);
+        return 1;
+    }
+
+    private static int setClear(final CommandSourceStack source) {
+        final ServerLevel level = source.getLevel();
+        if (!WindField.clearBaseOverride(level.dimension())) {
+            source.sendFailure(Component.literal(String.format(Locale.ROOT,
+                    "[Ventus] %s had no override to clear.", level.dimension().location())));
+            return 0;
+        }
+
+        final Vector3d configured = new Vector3d();
+        VentusConfig.baseWind(level.dimension(), configured);
+        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "[Ventus] override dropped; %s is back to the configured base wind"
+                        + " (%.3f, %.3f, %.3f).",
+                level.dimension().location(), configured.x, configured.y, configured.z)), false);
+        return 1;
+    }
+
+    /**
+     * {@code /windfield storm [clear | rain]} — sets the executing dimension's weather.
+     * <p>
+     * Goes through vanilla's own {@code setWeatherParameters}, with the durations held open so the
+     * weather stays where it was put until something else changes it. The rain and thunder
+     * <em>levels</em> then ease in over about five seconds, exactly as they do for real weather,
+     * which is what the field reads: the wind builds instead of stepping.
+     */
+    private static int storm(final CommandSourceStack source, final Weather weather) {
+        final ServerLevel level = source.getLevel();
+        // A switch *expression*, not a statement: only the expression form is exhaustive-checked,
+        // so the compiler can prove every path yields a message.
+        final String effect = switch (weather) {
+            case CLEAR -> {
+                level.setWeatherParameters(Integer.MAX_VALUE, 0, false, false);
+                yield "Rain and thunder ease out over ~5 seconds, so the wind settles back to its"
+                        + " dry-weather strength.";
+            }
+            case RAIN -> {
+                level.setWeatherParameters(0, Integer.MAX_VALUE, true, false);
+                yield "Rain eases in over ~5 seconds, so the wind builds the way it does in a real"
+                        + " shower.";
+            }
+            case STORM -> {
+                level.setWeatherParameters(0, Integer.MAX_VALUE, true, true);
+                yield "Rain and thunder ease in over ~5 seconds, so the wind builds the way it does"
+                        + " in a real storm.";
+            }
+        };
+
+        source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
+                "[Ventus] %s weather set to %s. %s",
+                level.dimension().location(), weather.name().toLowerCase(Locale.ROOT), effect)), false);
+        return 1;
     }
 
     /**

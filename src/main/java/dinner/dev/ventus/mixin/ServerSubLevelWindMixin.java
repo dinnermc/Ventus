@@ -1,5 +1,7 @@
 package dinner.dev.ventus.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
@@ -17,7 +19,6 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Locale;
@@ -205,24 +206,29 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
      * the two lift-provider passes do. {@code linearImpulse} and {@code angularImpulse} are passed
      * straight through untouched, so the controller still writes its lift and friction into them.
      * <p>
-     * Redirect instead of {@code @ModifyArg} on purpose: two {@code double} parameters precede the
-     * velocity here, so the argument index differs from the lift-provider target and is easy to get
-     * wrong. A redirect binds the call's parameters by type and cannot be miscounted.
+     * {@code @WrapOperation} rather than {@code @ModifyArg}: two {@code double} parameters precede
+     * the velocity here, so the argument index differs from the lift-provider target and is easy to
+     * get wrong, and a wrap binds the call's parameters by type and cannot be miscounted. It is also
+     * the polite injector on a shared call site — a {@code @Redirect} claims
+     * {@code physicsTick} exclusively, so the first other mod to wrap or redirect it makes one of
+     * the two mixins fail and the game refuses to boot. Wraps compose: several mods can wrap the
+     * same call and everyone's change survives.
      */
-    @Redirect(
+    @WrapOperation(
             method = PRE_PHYSICS_TICK,
             at = @At(value = "INVOKE", target = FLOATING_PHYSICS_TICK)
     )
     private void ventus$windOnFloatingBlocks(final FloatingBlockController controller,
             final double partialPhysicsTick, final double timeStep, final Vector3dc linearVelocity,
-            final Vector3dc angularVelocity, final Vector3d linearImpulse, final Vector3d angularImpulse) {
+            final Vector3dc angularVelocity, final Vector3d linearImpulse, final Vector3d angularImpulse,
+            final Operation<Void> original) {
         final Vector3dc wind = this.ventus$wind();
         final Vector3dc air = WindField.airRelative(linearVelocity, wind);
         if (ventus$debugDue(3)) {
             Ventus.LOGGER.info("[ventus] floating-pass wind={} vel={} -> air={}",
                     ventus$v(wind), ventus$v(linearVelocity), ventus$v(air));
         }
-        controller.physicsTick(partialPhysicsTick, timeStep, air, angularVelocity, linearImpulse, angularImpulse);
+        original.call(controller, partialPhysicsTick, timeStep, air, angularVelocity, linearImpulse, angularImpulse);
     }
 
     /**

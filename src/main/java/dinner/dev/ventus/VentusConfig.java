@@ -22,6 +22,7 @@ public final class VentusConfig {
 
     public static final ModConfigSpec SPEC;
 
+    public static final ModConfigSpec.BooleanValue ENABLED;
     public static final ModConfigSpec.DoubleValue WIND_SCALE;
     public static final ModConfigSpec.DoubleValue FADE_HEIGHT;
     public static final ModConfigSpec.DoubleValue SURFACE_CALM;
@@ -67,6 +68,15 @@ public final class VentusConfig {
 
     static {
         final ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
+
+        ENABLED = builder
+                .comment("Master switch: when false Ventus produces no wind at all.",
+                         "Sub-levels drift nowhere, the /windfield commands still work and read zero,",
+                         "and the client HUD disappears. Use this to turn Ventus off on a server that",
+                         "already gets its weather from another mod — with Aeronautics: Wind and",
+                         "Weather or PMWeather Aeronautics installed, the two wind vectors would",
+                         "otherwise add up. No restart needed: the file is hot-reloaded.")
+                .define("enabled", true);
 
         WIND_SCALE = builder
                 .comment("Global multiplier applied to the sampled wind field.",
@@ -277,6 +287,13 @@ public final class VentusConfig {
         builder.pop();
 
         SPEC = builder.build();
+    }
+
+    /**
+     * @return the master switch. While it is off the field is zero everywhere, for every caller.
+     */
+    public static boolean enabled() {
+        return ENABLED.get();
     }
 
     public static double windScale() {

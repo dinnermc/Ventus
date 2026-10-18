@@ -3,6 +3,8 @@
 Wind field mod for **Minecraft 1.21.1 / NeoForge 21.1.259** that makes Sable sub-levels
 (sails, planes, boats) feel the air move.
 
+Source and issues: <https://github.com/dinnermc/Ventus>
+
 Ventus hooks into [Sable's](https://github.com/RyanHCode) sub-level physics and feeds its lift and
 drag the velocity **relative to the air** instead of relative to the world, plus an impulse that
 makes Sable's universal drag act on that same air-relative velocity. Without it, a sub-level only
@@ -50,6 +52,7 @@ The field math lives in `WindModel`, a Minecraft-free class (JOML only) with uni
 Edit `run/config/ventus-server.toml` while the game is running — it is hot-reloaded, no restart:
 
 ```toml
+enabled = true
 windScale = 1.0
 fadeHeight = 32.0
 surfaceCalm = 0.1
@@ -84,15 +87,100 @@ shearMaxAltitude = 300.0
 [dimensions.overworld]
     magnitude = 3.0
     direction = 0.0
+
+[dimensions.nether]
+    magnitude = 0.0
+    direction = 0.0
+
+[dimensions.the_end]
+    magnitude = 0.0
+    direction = 0.0
 ```
+
+`enabled` is the master switch: with it off the field is zero everywhere, sub-levels drift nowhere,
+the `/windfield` commands still work and read zero, and the client HUD disappears. It is the
+no-restart way to hand the air to another wind mod (see *Compatibility*) or to run Sable without
+wind at all.
 
 It is a NeoForge **server** config, so it lives in `<instance>/config/ventus-server.toml` and is
 shared by every world in that instance. To override it for a single world, drop the same file in
 that world's `<world>/serverconfig/ventus-server.toml` instead — NeoForge reads that folder on top
-of the instance config, which is handy for per-world tuning on a dedicated server.
+of the instance config, which is handy for per-world tuning on a dedicated server. *(Checked on a
+dedicated server: the file is written to and hot-reloaded from `config/`, and a key added in a new
+version is appended to an existing file on the next start.)*
 
-The client has a second, much smaller file of its own, `config/ventus-client.toml`, which only
-places and formats the wind compass. It is described under *Wind compass (client)* below.
+### Frozen keys (1.0.0)
+
+These 37 keys, with these names, these defaults and these ranges, are the 1.0.0 contract. Adding a
+key later is safe; renaming one, moving one out of a section, or changing a default or a range
+breaks every server that has already written its file, so none of that will happen inside 1.x.
+
+| Key | Default | Range |
+| --- | --- | --- |
+| `enabled` | `true` | boolean |
+| `windScale` | `1.0` | `0.0` – `100.0` |
+| `fadeHeight` | `32.0` | `1.0` – `512.0` |
+| `surfaceCalm` | `0.1` | `0.0` – `1.0` |
+| `fieldScale` | `1500.0` | `100.0` – `100000.0` |
+| `fieldPeriod` | `1200.0` | `20.0` – `86400.0` |
+| `fieldStrength` | `1.0` | `0.0` – `5.0` |
+| `maxWindMultiplier` | `3.0` | `1.0` – `10.0` |
+| `gustScale` | `150.0` | `20.0` – `10000.0` |
+| `gustPeriod` | `120.0` | `5.0` – `86400.0` |
+| `gustAmplitude` | `0.35` | `0.0` – `2.0` |
+| `gustLateralFraction` | `0.3` | `0.0` – `1.0` |
+| `rainMultiplier` | `1.5` | `1.0` – `10.0` |
+| `thunderMultiplier` | `1.6` | `1.0` – `10.0` |
+| `thermalStrength` | `2.5` | `0.0` – `20.0` |
+| `thermalScale` | `200.0` | `20.0` – `10000.0` |
+| `thermalPeriod` | `90.0` | `5.0` – `86400.0` |
+| `thermalColdTemperature` | `0.8` | `-2.0` – `30.0` |
+| `thermalHotTemperature` | `2.0` | `-2.0` – `30.0` |
+| `slopeProbe` | `16.0` | `1.0` – `256.0` |
+| `slopeStrength` | `0.5` | `-5.0` – `5.0` |
+| `slopeHeightFalloff` | `50.0` | `1.0` – `1000.0` |
+| `leeGustBoost` | `1.0` | `0.0` – `10.0` |
+| `verticalSmoothSeconds` | `1.5` | `0.0` – `60.0` |
+| `thermalSkyClearance` | `8.0` | `0.0` – `256.0` |
+| `jetAltitude` | `220.0` | `-64.0` – `2048.0` |
+| `jetThickness` | `60.0` | `0.0` – `2048.0` |
+| `jetStrength` | `2.0` | `0.0` – `100.0` |
+| `shearSpeedPer100` | `0.25` | `-1.0` – `100.0` |
+| `shearDegreesPer100` | `15.0` | `-360.0` – `360.0` |
+| `shearMaxAltitude` | `300.0` | `0.0` – `3500.0` |
+| `dimensions.overworld.magnitude` | `3.0` | `0.0` – `100.0` |
+| `dimensions.overworld.direction` | `0.0` | `-360.0` – `360.0` |
+| `dimensions.nether.magnitude` | `0.0` | `0.0` – `100.0` |
+| `dimensions.nether.direction` | `0.0` | `-360.0` – `360.0` |
+| `dimensions.the_end.magnitude` | `0.0` | `0.0` – `100.0` |
+| `dimensions.the_end.direction` | `0.0` | `-360.0` – `360.0` |
+
+The client has a second, much smaller file of its own, `config/ventus-client.toml`, frozen the same
+way: a single key, `windCompass.corner`, whose value is one of `topLeft`, `topRight`, `bottomLeft`
+or `bottomRight`, defaulting to `topLeft`. It only places the wind compass, and it is described
+under *Wind compass (client)* below.
+
+## Compatibility
+
+**Sable** is required, and the accepted range is `[2.0.6, 2.1)`. The wind hooks inject into Sable's
+`prePhysicsTick` bytecode, which may move in 2.1, so outside the range the loader stops Ventus with
+a plain missing-dependency message rather than a mixin crash.
+
+**Other wind and weather mods.** *Aeronautics: Wind and Weather* and *PMWeather Aeronautics* each
+push their own wind onto the bodies they drive. Ventus has no compatibility layer for either: two
+mods applying wind to the same sub-level simply add, so a player on a stack that leaves both enabled
+feels both. Ventus is the only one of them tied to Sable's physics hooks, so there is nothing here
+that can arbitrate. If another mod owns the air on your server, turn Ventus off rather than tuning it
+down:
+
+```toml
+# config/ventus-server.toml — hot-reloaded, no restart
+enabled = false
+```
+
+Everything else keeps working with `enabled = false`: the commands still answer (reading zero), the
+sub-levels still simulate, and flipping the key back on brings the wind straight back. `enabled` is
+the switch — not launch arguments, and not uninstalling the jar.
 
 ## Debug options
 
@@ -116,18 +204,24 @@ These map to the `-Dventus.wind` / `-Dventus.disableWind` / `-Dventus.debugWind`
 
 ## Wind compass (client)
 
-A single line of text sits **in a screen corner** — top left by default:
+A single line sits **in a screen corner** — top left by default:
 
-- an **eight position arrow** for the direction the wind is blowing, in your own frame of reference:
-  it points up when the wind blows the way you are looking, right when it blows to your right, and
-  so on around you;
+- a small **needle** that swings to the direction the wind is blowing, in your own frame of
+  reference: it points up when the wind blows the way you are looking, right when it blows to your
+  right, and anywhere in between. The angle is continuous, not quantised;
 - the **speed** in m/s, coloured as the wind gets harder (grey → cyan → amber → red);
 - the **climb** once it is worth showing — `↑2.3` for rising air, `↓2.3` behind a ridge — and only
-  past 0.5 m/s, so a light breeze never clutters the line. The speed figure itself stays purely
-  **horizontal**, because that is what the arrow describes.
+  past 0.1 m/s, because a real variometer reads tenths and a default ridge under a 3 m/s wind only
+  lifts about 0.45 m/s. The speed figure itself stays purely **horizontal**, because that is what
+  the needle describes.
 
-An example: `↑ 3.2 m/s ↑1.3`. Still air is just a grey `0.0 m/s` with no arrow. The line is
-**cached**: it is rebuilt only when the figures it is made of change.
+An example: `3.2 m/s ↑1.3`. Still air is just a grey `0.0 m/s` with no needle.
+
+The server sends the wind five times a second, so the needle keeps its own angle and eases towards
+the received one every frame, with a 0.15 s time constant — the same exponential step the field
+smoothing uses, taking the short way round the dial and measured against the real frame time, so it
+settles the same way at 30 and at 144 fps. The text is **cached**: it is rebuilt only when the
+figures it is made of change.
 
 `config/ventus-client.toml` has a single key:
 
@@ -141,13 +235,19 @@ its state on disconnect, so a session's wind is never shown against the next ser
 **F8** shows/hides it (rebindable under *Options → Controls → Ventus*; it starts visible, and the
 toggle does not persist between sessions).
 
-The compass is fed by a small clientbound packet carrying the wind at your own eye position — the same
-field the physics hooks use, sampled at you rather than at a sub-level. The client cannot evaluate the
-field itself (the noise is seeded from the world seed, which only the server has), so the server
-pushes it at 5 Hz, and only when the value has moved by more than 0.05 m/s: a player standing still
-costs almost nothing, and the payload is twelve bytes. The channel is registered as **optional**, so a
-client without Ventus can still join a server that has it — it simply never receives the packet, and
-the compass stays hidden.
+The line is fed by a small clientbound packet, and it always carries the wind you actually feel:
+
+- **on foot** — the field sampled at your eye position, the same one the physics hooks use;
+- **standing in, riding or tracking a sub-level** — the vector that sub-level was given this tick,
+  not a fresh sample of the world around it. Reading the vehicle is what makes the instrument look
+  the same in both cases: it shows the air the plane is in, ramp-in and smoothing included, and it
+  agrees with `/windfield info` by construction.
+
+The client cannot evaluate the field itself (the noise is seeded from the world seed, which only the
+server has), so the server pushes it at 5 Hz, and only when the value has moved by more than 0.05 m/s:
+a player standing still costs almost nothing, and the payload is twelve bytes. The channel is
+registered as **optional**, so a client without Ventus can still join a server that has it — it simply
+never receives the packet, and the wind line stays hidden.
 
 ## Commands
 
@@ -160,6 +260,9 @@ the compass stays hidden.
   the second and not the first, so their difference is the canopy — printed rather than inferred
 - `universalDrag` (the drag coefficient the `d*w` impulse uses) and the sub-level's mass
 - the sub-level's material velocity and the **air-relative velocity** Sable's lift & drag actually sees
+- when run by a player, the last wind the **HUD** was sent (`hudWind`) with the level and the eye
+  position it was sampled at (`hudEye`). Comparing `hudWind.y` against the sub-level's `wind.y` is
+  the check for whether the HUD is reading the vehicle or the world around it
 
 `/windfield info <pos>` does the same for the sub-level containing `<pos>` — usable from a console
 or RCON without a player.
@@ -175,16 +278,43 @@ default = 16641 samples) and reports how often the wind points **against** the c
 `/windfield stats at <pos> [radius] [step]` centres the sweep on a point instead, so it runs from a
 console or RCON with no player online.
 
-Both forms need operator permission (level 2) and are capped at **65,000 samples**: the whole sweep
-runs on the server thread, and the argument ranges would otherwise allow over four million points,
-which locks the game rather than merely taking a while. An over-greedy radius/step pair is refused
-before the loop starts, with the count in the message (at radius 4096 the step must be 33 or more).
+Every `/windfield` subcommand needs operator permission (level 2), and `stats` is additionally capped
+at **65,000 samples**: the whole sweep runs on the server thread, and the argument ranges would
+otherwise allow over four million points, which locks the game rather than merely taking a while. An
+over-greedy radius/step pair is refused before the loop starts, with the count in the message (at
+radius 4096 the step must be 33 or more).
 
 **Window size matters.** The pressure noise is correlated over `fieldScale` (1500 blocks), so a window
 much smaller than that measures a *single patch* of noise rather than the distribution — a 784-block
 window first read 85% reversed where the real figure is 50%. The default covers several cells; for a
 steadier figure run it at a few far-apart centres and average. It costs nothing to pick a distant
 centre: `breakdown` never forces a chunk load, so the sweep is pure arithmetic.
+
+`/windfield set` forces the executing dimension's **base** wind to a vector, for the running session
+only. Nothing is written to the config, so it dies with the server:
+
+```
+/windfield set 10 0 0    # ten metres a second toward +X, here
+/windfield set           # what is in force, and what the config would say instead
+/windfield set clear     # drop it, back to ventus-server.toml
+```
+
+Only the `[dimensions]` entry is replaced — the pressure field, the gusts, the weather scaling and
+the altitude profile are still applied on top, so an override behaves like a real wind rather than a
+constant bolted into the physics. Everything that reads the base wind goes through one place, so
+`/windfield info`, the HUD and the sub-levels cannot disagree about it. The vector is taken
+literally: whole numbers are **not** snapped to a block centre the way a position argument would
+snap them, so `10 0 0` really is 10 m/s and not 10.5.
+
+`/windfield storm [clear | rain]` sets the same dimension's weather — bare means a full storm. It
+goes through vanilla's own weather parameters, with the durations held open, and the rain and
+thunder **levels** then ease in over about five seconds exactly as they do in real weather, which is
+what the field reads (`weather` climbs to `rainMultiplier × thunderMultiplier` = 2.4 at full storm).
+That five-second ramp is the reason the command is worth having: the wind builds the way it does in
+a real storm instead of appearing in one tick.
+
+Both are session-only and per-dimension, which makes them the cheap way to dial in a known wind for
+a test or for filming without editing a file or waiting for the weather to turn.
 
 ## Testing
 
@@ -337,33 +467,37 @@ Stage 6 checks:
    `mass * d * w * dt` coupling that pulls towards `v = w`. Ventus adds no size term of its own, so a
    large light balloon and a small dense one both converge on the wind speed, the big one visibly
    faster because its friction coefficients are its sail area.
-3. **Aircraft and ships are unchanged (6)** — fly the plane and sail a ship. Anything with lift
-   providers takes the two `contributeLiftAndDrag` passes and never relied on the floating-block path;
-   `physicsTick` is still called for it (the redirect wraps every call) but returns at its own
-   `needsTicking()` guard before writing a single impulse, so the output is identical. This is the
-   regression that is easiest to miss, because the new hook sits on a call that ships also reach.
-4. **`disableWind` still freezes everything (6)** — with `-Dventus.disableWind=true` a plane, a ship
-   and a balloon must all sit dead still. The chain is: `isCalm()` short-circuits `WindSampler` before
-   it samples anything, `sample()` would write zeros anyway, `airRelative` returns its input unchanged
-   when the wind is zero (so no allocation either), and `ventus$windDrag` bails on
-   `lengthSquared() == 0`. All three hooks degrade to exact identities.
+ 3. **Aircraft and ships are unchanged (6)** — fly the plane and sail a ship. Anything with lift
+    providers takes the two `contributeLiftAndDrag` passes and never relied on the floating-block path;
+    `physicsTick` is still called for it (the wrap covers every call) but returns at its own
+    `needsTicking()` guard before writing a single impulse, so the output is identical. This is the
+    regression that is easiest to miss, because the new hook sits on a call that ships also reach.
+ 4. **`disableWind` still freezes everything (6)** — with `-Dventus.disableWind=true` a plane, a ship
+    and a balloon must all sit dead still. The chain is: `isCalm()` short-circuits `WindSampler` before
+    it samples anything, `sample()` would write zeros anyway, `airRelative` returns its input unchanged
+    when the wind is zero (so no allocation either), and `ventus$windDrag` bails on
+    `lengthSquared() == 0`. All three hooks degrade to exact identities.
 
 Client checks:
 
-1. **Wind line** — F8 hides/shows it; turn in place and the arrow swings through the eight positions
-   while the figure stays put; fly up to `fadeHeight` and the speed climbs; the arrow must never jump.
+1. **Wind line** — F8 hides/shows it; turn in place and the needle swings with the view while the
+   figure stays put; fly up to `fadeHeight` and the speed climbs; the needle must never jump.
 2. **Lift and sink are readable (4)** — climb a windward face at noon: the line should grow a `↑`
    marker with the vertical component, and `↓` behind the ridge. The speed figure itself must still
    describe the **horizontal** wind only, so it does not jump when you cross a thermal.
 3. **Rebind** — Options → Controls → Ventus → *Toggle Wind Compass* accepts another key.
-4. **The arrow tracks the shear** — climb from sea level to the jet core: the wind turns through the
-   ~33° the defaults give, quantised into eight positions, so the arrow may step once across the whole
-   climb and no more, while the speed figure climbs into the high teens. The fade and the jet are both
-   smooth, so there is nothing for the arrow to step on at `fadeHeight` or at the edge of the band.
+4. **The needle tracks the shear** — climb from sea level to the jet core: the needle must sweep
+   smoothly through the ~33° of turn the defaults give, and the speed figure must climb into the high
+   teens. The fade and the jet are both smooth, so there is nothing for the needle to step on at
+   `fadeHeight` or at the edge of the band.
 5. **Placement** — F3 takes the line away, and `ventus-client.toml` moves it to any of the four
    corners.
 6. **Stale data** — on a server with Ventus, then on one without: the line must not survive the
    switch.
+7. **The same instrument in the air and on the ground** — aboard a sub-level, `/windfield info` must
+   print a `hudWind` identical to that sub-level's `wind`; on foot it is a fresh sample at the eye.
+   The climb marker must appear in the plane over a desert at noon exactly as it does on the ground
+   under the same column of air.
 
 ## Verification for 1.0.0
 
@@ -410,6 +544,18 @@ tell a wrong model from a misreading.
       reach.
 - [x] **6.4 `disableWind` freezes everything** — with `-Dventus.disableWind=true`: a plane, a ship
       **and** a balloon all sit dead still. All three hooks degrade to exact identities.
+- [x] **16. `enabled = false` freezes everything, with no restart** — on a running dedicated server,
+      set `enabled = false` in `config/ventus-server.toml`. `/windfield info <pos>` must report
+      `base`, `field`, `gust` and `total` all at zero, the jet and shear multipliers back to `1.00`
+      and `slope=n/a`; flip it back and the wind returns. *(Verified over RCON, both directions. The
+      key was also appended to an existing config file on the next start, which is what an upgrading
+      server will see.)*
+- [x] **17. `set` and `storm` dial in a known wind** — `/windfield set 10 0 0` must move `base` to
+      `(10, 0, 0)` at sea level and the profiled `base` to 10 × shear; `/windfield set clear` must
+      restore the configured `(3, 0, 0)`; `/windfield storm`, `rain` and `clear` must read `weather`
+      `2.40`, `1.50` and `1.00` once the ~5 s ramp has run. *(Verified over RCON. The vector is
+      parsed with `vec3(false)`, because the default `vec3()` snaps whole numbers to a block centre
+      and would have turned `10 0 0` into `(10.5, 0, 0.5)`.)*
 
 **The storm can reverse the wind — decided, and accepted.** Found by check 14: at `weather = 2.40` the
 pressure perturbation ran `|field|` = 11.96 against `|base|` = 2.80 — 4.27× — and pointed nearly the
@@ -486,10 +632,10 @@ against the full mod set, the two `@ModifyArg` hooks are untouched, and `physics
 own `needsTicking()` guard before writing any impulse for a sub-level without floating blocks. What
 is left is the behaviour in the world.
 
-All six are done, and the design question the earlier checks raised has been settled. The last one,
-**13 (a forest edge is not a hill)**, turned out not to need a client: `/windfield info <pos>` reads
-from the server, and with both column heights printed the leaf question is answered from a console
-or RCON instead of being worked backwards out of the other numbers.
+All of them are done, and the design question the earlier checks raised has been settled. The last
+one, **13 (a forest edge is not a hill)**, turned out not to need a client: `/windfield info <pos>`
+reads from the server, and with both column heights printed the leaf question is answered from a
+console or RCON instead of being worked backwards out of the other numbers.
 
 ## Building & testing
 
@@ -522,8 +668,8 @@ later stages against.
    later stage, and the delta between the two pairs is the useful figure — a single absolute number
    on its own says nothing, because Sable, Create and the world dominate it.
 5. **Stage 6 wants a second shape of world: balloons.** `WindField.airRelative` allocates a
-   `Vector3d` whenever the wind is non-zero, and stage 6 put a call on the floating-block pass —
-   once per sub-level per physics sub-step. Ships reach that redirect too, since it wraps the call
+    `Vector3d` whenever the wind is non-zero, and stage 6 put a call on the floating-block pass —
+    once per sub-level per physics sub-step. Ships reach that wrap too, since it wraps the call
    and only the controller's own `needsTicking()` guard stops it doing any work, so the fleet run
    already samples the cost; but a handful of balloons is the world that actually exercises it.
    Take the same mean/p99 pair over balloons and compare it against the ship run. If the delta is
@@ -536,18 +682,20 @@ later stages against.
   the air-relative velocity. Two are the `BlockSubLevelLiftProvider.sable$contributeLiftAndDrag` call
   sites (ships, sails, anything with lift providers), rewritten with `@ModifyArg`. The third is
   `FloatingBlockController.physicsTick` (balloons and any sub-level made of floating blocks), wrapped
-  with `@Redirect` — two `double` parameters precede the velocity there, so its argument index differs
-  from the other target and a `@ModifyArg` would be easy to miscount. The argument is read-only, so
-  only the forces derived from it change.
+  with `@WrapOperation` — two `double` parameters precede the velocity there, so its argument index
+  differs from the other target and a `@ModifyArg` would be easy to miscount. The argument is
+  read-only, so only the forces derived from it change.
 - The floating-block pass is what makes a balloon drift at all. `FloatingBlockController.applyFriction`
   opposes the body velocity *in world space*, which pulls a balloon towards `v = 0` and cancels the
   coupling below; the two neutralise each other and it never moves. Handed `v - w` instead, the very
   same friction becomes a sail — zero exactly at `v = w`, pushing downwind from rest — with the
   floating material's own coefficients as its area. Nothing in Ventus scales with balloon size.
-- **Before publishing:** move that third pass from `@Redirect` to `@WrapOperation`. A `@Redirect` owns
-  the call site outright, so if any other mod redirects the same `physicsTick` invocation the two
-  mixins conflict and the game refuses to start; `@WrapOperation` composes with them instead. NeoForge
-  21.1 already bundles MixinExtras, so this needs no new dependency.
+- That third pass is a `@WrapOperation` and not a `@Redirect` on purpose. A `@Redirect` owns the call
+  site outright, so if any other mod redirects the same `physicsTick` invocation the two mixins
+  conflict and the game refuses to start; a wrap composes with them instead, and the original is
+  still called explicitly so nothing is lost. NeoForge 21.1 already bundles MixinExtras, so this
+  costs no extra dependency. The server still boots with the full mod set (Create, Copycats,
+  Endless Gravity, Aeronautics) loaded.
 - The mixin implements `WindCarrier` to expose its `@Unique` wind state to `WindSampler` (the wind
   vector, the last height factor, and the first-sample time). The state is written by `WindSampler`
   and read by the hooks, both on the server thread, so no synchronisation is needed.
@@ -555,8 +703,11 @@ later stages against.
   damping equilibrium from `v = 0` to `v = w` so every ticking sub-level drifts with the wind.
 
 Because the hooks are injected into the concrete caller rather than the `BlockSubLevelLiftProvider`
-interface (which Mixin cannot inject into without `@Overwrite`), Ventus pins the Sable dependency to
-the `2.0.x` line — see `sable_version_range` in `gradle.properties`.
+interface (which Mixin cannot inject into without `@Overwrite`), Ventus pins Sable to
+`[2.0.6, 2.1)` — see `sable_version_range` in `gradle.properties`. **Checked both ends:** 2.0.6 is
+the newest published Sable, so the top of the range is current; and with 2.0.2 in the folder the
+loader refuses Ventus before any mixin is applied, with
+`Mod ventus requires sable 2.0.6 or above, and below 2.1` — a dependency message, not a mixin crash.
 
 ## License
 

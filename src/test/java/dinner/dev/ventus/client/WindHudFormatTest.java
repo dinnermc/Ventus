@@ -5,55 +5,76 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The single wind line: arrow, speed and climb marker, formatted without Minecraft. */
+/** The wind line: angle smoothing, speed and climb marker, formatted without Minecraft. */
 class WindHudFormatTest {
-    private static final String AHEAD = "\u2191";
-    private static final String RIGHT = "\u2192";
-    private static final String BEHIND = "\u2193";
     private static final String UP = "\u2191";
     private static final String DOWN = "\u2193";
 
     @Test
-    void arrowPointsInEightDirectionsRelativeToThePlayer() {
-        assertEquals(0, WindHudFormat.arrowIndex(0.0, 1.0), "the way you are looking");
-        assertEquals(1, WindHudFormat.arrowIndex(1.0, 1.0), "ahead right");
-        assertEquals(2, WindHudFormat.arrowIndex(1.0, 0.0), "right");
-        assertEquals(3, WindHudFormat.arrowIndex(1.0, -1.0), "behind right");
-        assertEquals(4, WindHudFormat.arrowIndex(0.0, -1.0), "behind");
-        assertEquals(5, WindHudFormat.arrowIndex(-1.0, -1.0), "behind left");
-        assertEquals(6, WindHudFormat.arrowIndex(-1.0, 0.0), "left");
-        assertEquals(7, WindHudFormat.arrowIndex(-1.0, 1.0), "ahead left");
+    void normalizeAngleKeepsTheShortWayRound() {
+        assertEquals(0.0, WindHudFormat.normalizeAngle(0.0), 1e-12);
+        assertEquals(0.0, WindHudFormat.normalizeAngle(2.0 * Math.PI), 1e-9);
+        assertEquals(0.0, WindHudFormat.normalizeAngle(-2.0 * Math.PI), 1e-9);
+        assertEquals(Math.PI, WindHudFormat.normalizeAngle(Math.PI), 1e-9);
+        assertEquals(-Math.PI, WindHudFormat.normalizeAngle(-Math.PI), 1e-9);
+        assertTrue(WindHudFormat.normalizeAngle(Math.PI + 0.1) < 0.0, "past the fold goes back");
+        assertEquals(Math.PI - 0.1, WindHudFormat.normalizeAngle(-Math.PI - 0.1), 1e-9);
+        assertEquals(Math.toRadians(10.0), WindHudFormat.normalizeAngle(Math.toRadians(370.0)), 1e-9);
+        assertEquals(Math.toRadians(10.0), WindHudFormat.normalizeAngle(Math.toRadians(-350.0)), 1e-9);
     }
 
     @Test
-    void arrowEitherSideOfAheadStaysAheadUntilItLeavesTheSector() {
-        assertEquals(0, WindHudFormat.arrowIndex(0.001, 1.0), "just right of ahead");
-        assertEquals(0, WindHudFormat.arrowIndex(-0.001, 1.0), "just left of ahead");
-        assertEquals(7, WindHudFormat.arrowIndex(-0.5, 1.0), "ahead left");
-        assertEquals(2, WindHudFormat.arrowIndex(1.0, -0.001), "just behind the right");
+    void approachAngleTakesTheShortWayRoundTheDial() {
+        final double current = Math.toRadians(350.0);
+        final double target = Math.toRadians(10.0);
+        final double next = WindHudFormat.approachAngle(current, target, 1.0, 0.15);
+
+        // one long step must land on the target, not 340 degrees the long way round
+        assertEquals(0.0, WindHudFormat.normalizeAngle(next - target), 1e-3);
+        assertEquals(Math.toRadians(20.0), WindHudFormat.normalizeAngle(next - current), 1e-3);
     }
 
     @Test
-    void climbMarkerNeedsMoreThanHalfAMetrePerSecond() {
+    void approachAngleLeavesTheAngleAloneWhenItIsAlreadyThere() {
+        assertEquals(1.25, WindHudFormat.approachAngle(1.25, 1.25, 0.016, 0.15), 1e-12);
+        assertEquals(1.25, WindHudFormat.approachAngle(1.25, 1.25, 5.0, 0.15), 1e-12);
+    }
+
+    @Test
+    void approachAngleSettlesInRealTimeRatherThanInFrames() {
+        final double current = 0.0;
+        final double target = Math.PI / 2.0;
+        final double oneStep = WindHudFormat.approachAngle(current, target, 0.5, 0.15);
+        final double twoSteps = WindHudFormat.approachAngle(
+                WindHudFormat.approachAngle(current, target, 0.25, 0.15), target, 0.25, 0.15);
+        double tenSteps = current;
+        for (int i = 0; i < 10; i++) {
+            tenSteps = WindHudFormat.approachAngle(tenSteps, target, 0.05, 0.15);
+        }
+        assertEquals(oneStep, twoSteps, 1e-9);
+        assertEquals(oneStep, tenSteps, 1e-9);
+        assertTrue(oneStep > 0.0 && oneStep < target, "must move towards the target and stop short");
+    }
+
+    @Test
+    void climbMarkerNeedsMoreThanATenthOfAMetrePerSecond() {
         assertEquals("", WindHudFormat.climbLabel(0.0));
-        assertEquals("", WindHudFormat.climbLabel(WindHudFormat.CLIMB_EPSILON), "exactly 0.5 is not past it");
+        assertEquals("", WindHudFormat.climbLabel(WindHudFormat.CLIMB_EPSILON), "exactly the threshold is not past it");
         assertEquals("", WindHudFormat.climbLabel(-WindHudFormat.CLIMB_EPSILON));
-        assertEquals(UP + "0.5", WindHudFormat.climbLabel(0.51), "just past the threshold");
-        assertEquals(DOWN + "0.5", WindHudFormat.climbLabel(-0.51));
+        assertEquals(UP + "0.1", WindHudFormat.climbLabel(0.11), "just past the threshold");
+        assertEquals(DOWN + "0.1", WindHudFormat.climbLabel(-0.11));
+        assertEquals(UP + "0.4", WindHudFormat.climbLabel(0.44), "a light ridge lift is visible now");
+        assertEquals(UP + "0.5", WindHudFormat.climbLabel(0.45), "and 0.45 rounds up, as the string must");
         assertEquals(UP + "1.3", WindHudFormat.climbLabel(1.3));
     }
 
     @Test
-    void lineIsTheArrowThenTheSpeedThenTheClimb() {
-        assertEquals(AHEAD + " 3.2 m/s", WindHudFormat.line(3.2, 0.0, 0));
-        assertEquals(RIGHT + " 3.2 m/s " + UP + "1.3", WindHudFormat.line(3.2, 1.3, 2));
-        assertEquals(BEHIND + " 3.2 m/s " + DOWN + "2.0", WindHudFormat.line(3.2, -2.0, 4));
-    }
-
-    @Test
-    void lineWithoutAnArrowIsJustTheFigure() {
-        assertEquals("0.0 m/s", WindHudFormat.line(0.0, 0.0, -1));
-        assertEquals("0.0 m/s " + UP + "1.3", WindHudFormat.line(0.0, 1.3, -1));
+    void lineIsTheSpeedThenTheClimb() {
+        assertEquals("3.2 m/s", WindHudFormat.line(3.2, 0.0));
+        assertEquals("3.2 m/s " + UP + "1.3", WindHudFormat.line(3.2, 1.3));
+        assertEquals("3.2 m/s " + DOWN + "2.0", WindHudFormat.line(3.2, -2.0));
+        assertEquals("0.0 m/s", WindHudFormat.line(0.0, 0.0));
+        assertEquals("0.0 m/s " + UP + "1.3", WindHudFormat.line(0.0, 1.3));
     }
 
     @Test

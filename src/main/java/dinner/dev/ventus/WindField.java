@@ -67,6 +67,61 @@ public final class WindField {
     /** Fixed debug override from {@code -Dventus.wind}, or {@code null} when the field is used. */
     private static final Vector3d FIXED_OVERRIDE = parseOverride(System.getProperty("ventus.wind"));
 
+    /**
+     * Both kill switches together: the static {@code -Dventus.disableWind} system property and the
+     * hot-reloadable {@code enabled} config key. The system property is frozen at class-load and is
+     * a development aid; the config key is what a server admin uses, and it can be flipped without a
+     * restart. Every entry point into the field goes through here so the two can never disagree.
+     */
+    private static boolean windEnabled() {
+        return ENABLED && VentusConfig.enabled();
+    }
+
+    /**
+     * Session-only base-wind overrides, keyed by dimension, set by {@code /windfield set}.
+     * <p>
+     * These sit in front of {@link VentusConfig#baseWind} and are never written to the config file:
+     * they exist so an admin or a video shoot can dial in a known vector without editing anything,
+     * and they die with the server. Everything downstream — the jet, the shear, the field, the
+     * budget, the commands and the HUD — reads them through {@link #baseWind}, so an override looks
+     * exactly like a configured base wind and nothing has to special-case it.
+     */
+    private static final Map<ResourceKey<Level>, Vector3d> BASE_OVERRIDE = new HashMap<>();
+
+    /**
+     * Forces this dimension's base wind to {@code wind} until the server restarts or
+     * {@link #clearBaseOverride} is called.
+     */
+    public static void setBaseOverride(final ResourceKey<Level> dimension, final Vector3dc wind) {
+        BASE_OVERRIDE.put(dimension, new Vector3d(wind));
+    }
+
+    /**
+     * Drops this dimension's override.
+     *
+     * @return {@code true} if there was one to drop
+     */
+    public static boolean clearBaseOverride(final ResourceKey<Level> dimension) {
+        return BASE_OVERRIDE.remove(dimension) != null;
+    }
+
+    /** The override in force for this dimension, or {@code null} when the config is used. */
+    public static Vector3d baseOverride(final ResourceKey<Level> dimension) {
+        final Vector3d override = BASE_OVERRIDE.get(dimension);
+        return override == null ? null : new Vector3d(override);
+    }
+
+    /**
+     * The base wind a dimension actually blows: the {@code /windfield set} override if there is one,
+     * otherwise the configured {@code [dimensions]} entry. The single place both {@link #sample} and
+     * {@link #breakdown} go through, so the override can never be applied in one path and forgotten
+     * in the other.
+     */
+    private static Vector3d baseWind(final ServerLevel level, final Vector3d dest) {
+        final Vector3d override = BASE_OVERRIDE.get(level.dimension());
+        return override == null ? VentusConfig.baseWind(level.dimension(), dest) : dest.set(override);
+    }
+
     private static Vector3d parseOverride(final String spec) {
         if (spec == null || spec.isBlank()) {
             return null;
@@ -385,7 +440,7 @@ public final class WindField {
     public static void sample(final ServerLevel level, final Vector3dc worldPos, final WindCarrier carrier) {
         final Vector3d dest = carrier.ventus$wind();
 
-        if (!ENABLED) {
+        if (!windEnabled()) {
             carrier.ventus$setFade(0.0);
             dest.set(0.0, 0.0, 0.0);
             return;
@@ -397,7 +452,7 @@ public final class WindField {
             return;
         }
 
-        VentusConfig.baseWind(level.dimension(), dest);
+        baseWind(level, dest);
         if (dest.lengthSquared() == 0.0) {
             carrier.ventus$setFade(0.0);
             return;
@@ -515,7 +570,7 @@ public final class WindField {
         dest.groundHeight = surfaceAt(level, columnX, columnZ);
         dest.floorHeight = columnAt(level, columnX, columnZ, Heightmap.Types.OCEAN_FLOOR);
 
-        if (!ENABLED) {
+        if (!windEnabled()) {
             return dest;
         }
 
@@ -525,7 +580,7 @@ public final class WindField {
             return dest;
         }
 
-        VentusConfig.baseWind(level.dimension(), dest.base);
+        baseWind(level, dest.base);
         if (dest.base.lengthSquared() == 0.0) {
             return dest;
         }
