@@ -96,8 +96,4 @@ and 2.0.6 is the newest published Sable.
 - `/windfield set` and `/windfield storm` were exercised over RCON against a live server: the
   override moves `base` and `clear` restores the config value, and `weather` reads 1.00 / 1.50 /
   2.40 for clear / rain / storm.
-
-### Still to do before publishing
-
-- **Icon.** `logoFile` is wired up in `neoforge.mods.toml` but commented out, waiting on a
-  128×128 PNG at `src/main/resources/assets/ventus/icon.png`.
+- The mod icon ships at `assets/ventus/icon.png`, referenced by `logoFile`.
