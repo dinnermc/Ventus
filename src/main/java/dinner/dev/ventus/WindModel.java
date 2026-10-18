@@ -74,6 +74,22 @@ public final class WindModel {
     private static final double GUST_LATERAL_OFFSET_Z = -2.0;
 
     /**
+     * The local wind, as a fraction of the base wind, below which the gusts fade out. At or above
+     * {@code GUST_CALM_FADE * reference} the factor is exactly 1, so ordinary wind is untouched and
+     * {@code gustAmplitude} keeps meaning what the config says. At zero local wind it is 0.
+     * <p>
+     * The gust is oriented along the local (base + field) wind, and its amplitude does not shrink as
+     * that vector shortens. Where the perturbation cancels the base the direction is undefined and
+     * the gust swings with it — measured, the total jumped 86% of the base wind across a quarter
+     * block. Fading on the local speed removes the jump and is also the physical answer: a col in
+     * the pressure field is a calm point, and calm air carries no gusts.
+     * <p>
+     * A constant rather than a config key on purpose. Adding a key later is backwards-compatible and
+     * removing one is not, so it stays hard-coded until somebody actually asks to tune it.
+     */
+    private static final double GUST_CALM_FADE = 0.5;
+
+    /**
      * The tunable inputs, mirroring the server config (see {@link VentusConfig}).
      *
      * @param fieldScale           map scale: the size in blocks of the largest wind structures ({@code L})
@@ -572,7 +588,13 @@ public final class WindModel {
                 final double ngt = timeSeconds / settings.gustPeriod();
                 final double along = gust.at(ngx, ngz, ngt);
                 final double across = gust.at(ngx + GUST_LATERAL_OFFSET_X, ngz + GUST_LATERAL_OFFSET_Z, ngt);
-                final double amp = settings.gustAmplitude() * reference * weather * (1.0 + leeBoost);
+                // Fade the gust out as the local wind approaches zero, so it cannot swing through an
+                // undefined direction where the perturbation cancels the base. Exactly 1 above the
+                // threshold, so ordinary wind is untouched.
+                final double fade = reference > 0.0
+                        ? smoothstep(dirLen / (GUST_CALM_FADE * reference))
+                        : 0.0;
+                final double amp = settings.gustAmplitude() * reference * weather * (1.0 + leeBoost) * fade;
                 final double lateral = settings.gustLateralFraction() * across;
                 out.gust.set((dirX * along - dirZ * lateral) * amp, 0.0, (dirZ * along + dirX * lateral) * amp);
                 out.total.add(out.gust);

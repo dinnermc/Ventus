@@ -8,8 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import org.junit.jupiter.api.Disabled;
-
 /**
  * Unit tests for {@link WindModel}. These run without Minecraft: the model only uses JOML, and the
  * noise is supplied through the {@link WindModel.Noise3} interface. Smooth analytic noise stands in
@@ -95,6 +93,19 @@ class WindModelTest {
 
         assertEquals(dry.field.x * STORM, storm.field.x, 1e-9);
         assertEquals(dry.field.z * STORM, storm.field.z, 1e-9);
+
+        // The gust ratio below only holds where the calm-point fade is exactly 1 in *both* runs. That
+        // is true here by the choice of sample point, not by construction - so state it. If someone
+        // moves this point somewhere the storm field cancels the base, one fade starts shrinking and
+        // the ratio would fail with a bare number instead of an explanation.
+        // Threshold = WindModel.GUST_CALM_FADE * reference.
+        for (final WindModel.Result r : new WindModel.Result[] { dry, storm }) {
+            final double localLen = Math.hypot(BASE.x + r.field.x, BASE.z + r.field.z);
+            assertTrue(localLen >= 0.5 * BASE.length(),
+                    "sample point (500, 250) is too calm for this assertion: |local wind| = "
+                            + localLen + ", fade threshold = " + 0.5 * BASE.length()
+                            + " - pick somewhere with ordinary wind");
+        }
 
         // The gust amplitude scales with the weather too. Its *direction* is taken from the local
         // wind, which the scaled field has already turned, so only the magnitude is comparable — and
@@ -201,6 +212,53 @@ class WindModelTest {
         assertEquals(calmLee.gust.length() * 2.0, roughLee.gust.length(), 1e-9);
         assertEquals(calmLee.field.x, roughLee.field.x, 1e-9);
         assertEquals(calmLee.field.z, roughLee.field.z, 1e-9);
+    }
+
+    @Test
+    void gustsKeepTheirFullAmplitudeWhereTheWindIsNotCalm() {
+        // The calm-point fade has one job: kill the gust where the local wind has cancelled. It must
+        // leave ordinary wind alone, or gustAmplitude stops meaning what the config says. So the
+        // expected gust here is rebuilt by hand from the same noise calls the model makes, with the
+        // fade at exactly 1 — and the test would fail if the fade ever ate into normal wind.
+        final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 50.0, 150, 120, 0.35, 0.3, 0.0);
+        final WindModel.Result out = new WindModel.Result();
+
+        // Scan for a point where the local wind is comfortably above the base itself.
+        double bestX = 0.0;
+        double bestZ = 0.0;
+        double bestLen = 0.0;
+        for (int i = 0; i < 300; i++) {
+            for (int j = 0; j < 300; j++) {
+                final double x = i * 13.0;
+                final double z = j * 17.0;
+                WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, x, z, 0.0, BASE, DRY, s, out);
+                final double len = Math.hypot(BASE.x + out.field.x, BASE.z + out.field.z);
+                if (len > bestLen) {
+                    bestLen = len;
+                    bestX = x;
+                    bestZ = z;
+                }
+            }
+        }
+        assertTrue(bestLen > BASE.length(), "need a point where the local wind exceeds the base");
+
+        WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, bestX, bestZ, 0.0, BASE, DRY, s, out);
+
+        final double localX = BASE.x + out.field.x;
+        final double localZ = BASE.z + out.field.z;
+        final double dirLen = Math.hypot(localX, localZ);
+        final double dirX = localX / dirLen;
+        final double dirZ = localZ / dirLen;
+
+        final double ngx = bestX / 150.0;
+        final double ngz = bestZ / 150.0;
+        final double along = gust(ngx, ngz, 0.0);
+        final double across = gust(ngx + 5.0, ngz - 2.0, 0.0);
+        final double lateral = 0.3 * across;
+        final double amp = 0.35 * BASE.length() * DRY;
+
+        assertEquals((dirX * along - dirZ * lateral) * amp, out.gust.x, 1e-12, "gust.x");
+        assertEquals((dirZ * along + dirX * lateral) * amp, out.gust.z, 1e-12, "gust.z");
     }
 
     @Test
@@ -325,8 +383,6 @@ class WindModelTest {
     }
 
     @Test
-    @Disabled("KNOWN: the gust jumps 86% of the base wind at the wind calm point. Re-enable once the"
-            + " orientation is decided - see the method body.")
     void fieldIsContinuousThroughTheWindCalmPointInAStorm() {
         // The gust is oriented along the local (base + field) wind and its amplitude does not shrink
         // as that vector shortens (WindModel: dirLen is only used to normalise, amp comes from
@@ -385,6 +441,102 @@ class WindModelTest {
         assertTrue(maxStep < 0.05 * BASE.length(),
                 "wind jumped " + maxStep + " per quarter-block near the calm point at ("
                         + bestX + ", " + bestZ + "), where |local wind| fell to " + bestLen);
+    }
+
+    /**
+     * A pressure that grows quadratically, so its gradient - and the field - varies linearly.
+     * <p>
+     * Note the argument order: {@link WindModel.Noise3} is declared {@code at(x, y, z)} but the model
+     * samples it as {@code at(nx, nz, nt)}, so the world-z axis arrives in the <em>second</em>
+     * parameter and time in the third. Ramping the third one ramps time and leaves the gradient in
+     * z at zero, which produces a field of exactly nothing.
+     */
+    private static double rampPressure(final double x, final double nz, final double time) {
+        return 0.5 * nz * nz;
+    }
+
+    /**
+     * The z at which {@link #rampPressure} cancels the base wind: a coarse scan to bracket the
+     * crossing, then a bisection to pin it down. The field varies linearly in z, so the signed
+     * local x changes sign exactly once and bisection converges on it.
+     */
+    private static double rampCalmZ(final WindModel.Settings s, final double weather) {
+        final WindModel.Result out = new WindModel.Result();
+
+        // Coarse scan: find the first z where the local wind has gone negative.
+        double lo = 0.0;
+        double hi = 0.0;
+        double prevZ = 0.0;
+        double prevX = BASE.x;
+        for (double z = 2.0; z <= 3000.0; z += 2.0) {
+            WindModel.evaluate(WindModelTest::rampPressure, WindModelTest::gust, 0.0, z, 0.0, BASE, weather, s, out);
+            final double localX = BASE.x + out.field.x;
+            if (prevX > 0.0 && localX <= 0.0) {
+                lo = prevZ;
+                hi = z;
+                break;
+            }
+            prevZ = z;
+            prevX = localX;
+        }
+        assertTrue(hi > lo, "the ramp noise must actually cancel the base; local x never changed sign");
+
+        // Bisect until the crossing is narrower than the model's own zero guard (dirLen > 1e-9).
+        for (int i = 0; i < 64; i++) {
+            final double mid = 0.5 * (lo + hi);
+            WindModel.evaluate(WindModelTest::rampPressure, WindModelTest::gust, 0.0, mid, 0.0, BASE, weather, s, out);
+            if (BASE.x + out.field.x > 0.0) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        return 0.5 * (lo + hi);
+    }
+
+    @Test
+    void theGustDoesNotJumpWhereTheLocalWindCancels() {
+        // The default test noise never cancels the base - a 160k-point storm scan bottoms out at
+        // |local| = 2.48 against |base| = 3.0 - so this one forces the crossing by hand. A ramp in z
+        // gives a field that varies linearly with z, so there is exactly one z where the local wind
+        // is zero, and the walk passes straight through it.
+        final WindModel.Settings s = settings(1500, 1200, 1.0, 50.0);
+        final WindModel.Result out = new WindModel.Result();
+        final double calmZ = rampCalmZ(s, STORM);
+
+        final Vector3d prev = new Vector3d();
+        double maxStep = 0.0;
+        WindModel.evaluate(WindModelTest::rampPressure, WindModelTest::gust, 0.0, calmZ - 20.0, 0.0,
+                BASE, STORM, s, out);
+        prev.set(out.total);
+        for (double z = calmZ - 20.0 + 0.1; z <= calmZ + 20.0; z += 0.1) {
+            WindModel.evaluate(WindModelTest::rampPressure, WindModelTest::gust, 0.0, z, 0.0,
+                    BASE, STORM, s, out);
+            maxStep = Math.max(maxStep, prev.distance(out.total));
+            prev.set(out.total);
+        }
+
+        System.out.printf("ramp calm-point walk: calmZ=%.1f maxStep=%.5f (%.1f%% of base)%n",
+                calmZ, maxStep, 100.0 * maxStep / BASE.length());
+
+        assertTrue(maxStep < 0.05 * BASE.length(),
+                "wind jumped " + maxStep + " per tenth-block crossing the calm point at z=" + calmZ);
+    }
+
+    @Test
+    void theGustIsZeroAndTheTotalFiniteAtTheCalmPoint() {
+        // At the crossing itself the local wind has no direction to speak of. The gust must be
+        // exactly zero there, and the total finite - not a NaN built from a normalised zero vector.
+        final WindModel.Settings s = settings(1500, 1200, 1.0, 50.0);
+        final WindModel.Result out = new WindModel.Result();
+        final double calmZ = rampCalmZ(s, STORM);
+
+        WindModel.evaluate(WindModelTest::rampPressure, WindModelTest::gust, 0.0, calmZ, 0.0,
+                BASE, STORM, s, out);
+
+        assertEquals(0.0, out.gust.length(), 1e-12, "gust at the calm point");
+        assertTrue(Double.isFinite(out.total.x) && Double.isFinite(out.total.y)
+                && Double.isFinite(out.total.z), "total must stay finite at the calm point");
     }
 
     @Test
