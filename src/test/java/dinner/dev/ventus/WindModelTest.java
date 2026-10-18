@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.junit.jupiter.api.Disabled;
+
 /**
  * Unit tests for {@link WindModel}. These run without Minecraft: the model only uses JOML, and the
  * noise is supplied through the {@link WindModel.Noise3} interface. Smooth analytic noise stands in
@@ -320,6 +322,111 @@ class WindModelTest {
 
         assertTrue(maxStep < 0.05 * BASE.length(),
                 "wind jumped " + maxStep + " per half-block (should be smooth)");
+    }
+
+    @Test
+    @Disabled("KNOWN: the gust jumps 86% of the base wind at the wind calm point. Re-enable once the"
+            + " orientation is decided - see the method body.")
+    void fieldIsContinuousThroughTheWindCalmPointInAStorm() {
+        // The gust is oriented along the local (base + field) wind and its amplitude does not shrink
+        // as that vector shortens (WindModel: dirLen is only used to normalise, amp comes from
+        // reference). So the risk is where the perturbation nearly cancels the base: there the
+        // direction is poorly defined and the gust could swing with it.
+        //
+        // The question is not whether the default noise happens to cancel — it does not, a scan of
+        // 160k storm points bottoms out at |local| = 2.48 against |base| = 3.0 — but what the code
+        // does when it does. So the strength is driven up until cancellation is unavoidable, the
+        // calm point is located, and a quarter-block line is walked through it.
+        final WindModel.Settings s = settings(1500, 1200, 8.0, 3.0);
+        final WindModel.Result out = new WindModel.Result();
+
+        // 1. Coarse scan for the smallest local wind a storm can produce at this strength.
+        double bestLen = Double.MAX_VALUE;
+        double bestX = 0.0;
+        double bestZ = 0.0;
+        for (int i = 0; i < 400; i++) {
+            for (int j = 0; j < 400; j++) {
+                final double x = i * 11.0;
+                final double z = j * 13.0;
+                WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, x, z, 0.0, BASE, STORM, s, out);
+                final double len = Math.hypot(BASE.x + out.field.x, BASE.z + out.field.z);
+                if (len < bestLen) {
+                    bestLen = len;
+                    bestX = x;
+                    bestZ = z;
+                }
+            }
+        }
+
+        // 2. Walk a quarter-block line through it and measure the largest single step.
+        final Vector3d prev = new Vector3d();
+        double maxStep = 0.0;
+        double worstAt = 0.0;
+        final double span = 60.0;
+
+        WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, bestX - span, bestZ, 0.0,
+                BASE, STORM, s, out);
+        prev.set(out.total);
+        for (double d = -span + 0.25; d <= span; d += 0.25) {
+            WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, bestX + d, bestZ, 0.0,
+                    BASE, STORM, s, out);
+            final double step = prev.distance(out.total);
+            if (step > maxStep) {
+                maxStep = step;
+                worstAt = d;
+            }
+            prev.set(out.total);
+        }
+
+        System.out.printf("storm calm-point walk: minLocalWind=%.5f at (%.0f, %.0f); "
+                        + "maxStep=%.5f (%.1f%% of base) at d=%.1f%n",
+                bestLen, bestX, bestZ, maxStep, 100.0 * maxStep / BASE.length(), worstAt);
+
+        assertTrue(maxStep < 0.05 * BASE.length(),
+                "wind jumped " + maxStep + " per quarter-block near the calm point at ("
+                        + bestX + ", " + bestZ + "), where |local wind| fell to " + bestLen);
+    }
+
+    @Test
+    void theFieldOccasionallyReversesThePrevailingWind() {
+        // fieldStrength = 1.0 means the typical deflection is the same size as the base wind, so the
+        // perturbation is bound to overtake the prevailing flow at some points and point against it
+        // there. The storm multiplier makes that more frequent; it does not make it possible. The
+        // number is quoted in the README, so measure it rather than describe it.
+        final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
+        final WindModel.Result out = new WindModel.Result();
+
+        final int samples = 20000;
+        int dryReversed = 0;
+        int stormReversed = 0;
+
+        for (int i = 0; i < samples; i++) {
+            // A lattice wide enough to cover many field scales, with time advancing, so the samples
+            // sweep the noise instead of freezing one slice of it.
+            final double x = (i % 141) * 37.0;
+            final double z = (i / 141) * 53.0;
+            final double t = i * 0.37;
+
+            WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, x, z, t, BASE, DRY, s, out);
+            if (out.total.x * BASE.x + out.total.z * BASE.z < 0.0) {
+                dryReversed++;
+            }
+
+            WindModel.evaluate(WindModelTest::pressure, WindModelTest::gust, x, z, t, BASE, STORM, s, out);
+            if (out.total.x * BASE.x + out.total.z * BASE.z < 0.0) {
+                stormReversed++;
+            }
+        }
+
+        final double dryFraction = dryReversed / (double) samples;
+        final double stormFraction = stormReversed / (double) samples;
+        System.out.printf("reversal: dry=%.1f%% storm=%.1f%%%n", 100.0 * dryFraction, 100.0 * stormFraction);
+
+        assertTrue(stormFraction > dryFraction,
+                "a storm must reverse the wind more often than dry air, not less");
+        assertTrue(stormFraction < 0.5,
+                "the prevailing direction has to still win most of the time, even in a storm: "
+                        + stormFraction);
     }
 
     @Test
