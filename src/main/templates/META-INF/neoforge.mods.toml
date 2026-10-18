@@ -27,7 +27,7 @@ displayURL="https://github.com/dinnermc/Ventus" #optional
 # A file name (in the root of the mod JAR) containing a logo for display
 logoFile="assets/ventus/icon.png" #optional
 # A text field displayed in the mod UI
-#credits="" #optional
+credits="Sable sub-level physics by RyanHCode; mod and docs by dinner" #optional
 # A text field displayed in the mod UI
 authors = "${mod_authors}" #optional
 
