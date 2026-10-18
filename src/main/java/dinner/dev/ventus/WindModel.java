@@ -339,6 +339,130 @@ public final class WindModel {
     }
 
     /**
+     * Hermite smoothstep on {@code [0, 1]}, with zero slope at both ends so a band built from it
+     * starts and stops without a step.
+     *
+     * @param t the position across the band; clamped to {@code [0, 1]}
+     * @return a value in {@code [0, 1]}
+     */
+    public static double smoothstep(final double t) {
+        final double clamped = Math.min(1.0, Math.max(0.0, t));
+        return clamped * clamped * (3.0 - 2.0 * clamped);
+    }
+
+    /**
+     * How strongly the jet stream is blowing at a given <em>absolute</em> altitude.
+     *
+     * <p>A jet is a band of fast air, not a feature of the ground below it, so this is keyed on world
+     * Y rather than on height above terrain. The band is a smoothstep centred on {@code core}: the
+     * multiplier is {@code 1 + strength} at the core, eases to {@code 1} at {@code core ± thickness},
+     * and stays at {@code 1} outside. It scales the prevailing wind's <em>magnitude</em> only — the
+     * jet rides on the direction the dimension already blows, which is what keeps it composable with
+     * the clamp budget downstream.
+     *
+     * @param altitude  absolute world Y (blocks)
+     * @param core      absolute world Y of the jet core
+     * @param thickness half-width of the band in blocks; {@code <= 0} disables the jet
+     * @param strength  extra multiplier at the core (0 = none, 9 = ten times the base)
+     * @return a multiplier {@code >= 1}
+     */
+    public static double jetFactor(final double altitude, final double core, final double thickness,
+            final double strength) {
+        if (strength <= 0.0 || thickness <= 0.0) {
+            return 1.0;
+        }
+        final double across = Math.abs(altitude - core) / thickness;
+        if (across >= 1.0) {
+            return 1.0;
+        }
+        return 1.0 + strength * smoothstep(1.0 - across);
+    }
+
+    /**
+     * The altitude the wind shear is measured from.
+     *
+     * <p>Shear is a near-surface effect: it grows as you climb away from the ground and then
+     * saturates, which is what the real boundary layer does — the Ekman spiral converges after a
+     * kilometre or so rather than turning forever. Without a cap the growth runs all the way to the
+     * top of Sable's atmosphere, where the wind has done several full turns and the budget has no
+     * say over the heading. Below Y 0 this reads as Y 0, so the deep dark does not turn the wind the
+     * other way.
+     *
+     * @param altitude    absolute world Y (blocks)
+     * @param maxAltitude the altitude at which the shear stops growing; {@code <= 0} caps it at the
+     *                    ground, which switches the shear off entirely
+     * @return the altitude to measure the shear from, clamped to {@code [0, maxAltitude]}
+     */
+    public static double shearAltitude(final double altitude, final double maxAltitude) {
+        return Math.min(Math.max(0.0, altitude), Math.max(0.0, maxAltitude));
+    }
+
+    /**
+     * The wind shear's effect on speed at a given absolute altitude.
+     *
+     * <p>Shear is a rate per 100 blocks measured from Y 0, so it describes how the wind at one height
+     * compares to the wind at another, with no ground involved. It is additive, and floored at zero
+     * so a negative rate can calm the air at altitude but never reverse it. The altitude is the one
+     * {@link #shearAltitude} returns, so the shear saturates at {@code maxAltitude} and reads as
+     * ground level below Y 0.
+     *
+     * @param altitude    absolute world Y (blocks)
+     * @param perHundred  multiplier gained per 100 blocks of altitude (0 = none)
+     * @param maxAltitude the altitude at which the shear stops growing
+     * @return a multiplier {@code >= 0}
+     */
+    public static double shearFactor(final double altitude, final double perHundred,
+            final double maxAltitude) {
+        if (perHundred == 0.0) {
+            return 1.0;
+        }
+        return Math.max(0.0, 1.0 + perHundred * shearAltitude(altitude, maxAltitude) / 100.0);
+    }
+
+    /**
+     * How far the wind's heading has turned at a given absolute altitude, in degrees.
+     *
+     * <p>The other half of shear: as well as changing speed with height, the wind veers. The angle is
+     * applied to the base wind before anything downstream measures the terrain along it, so the ridge
+     * lift at altitude is taken along the wind that actually blows there. Positive turns the wind
+     * clockwise from above, the same sense the configured direction uses ({@code 0°} is east,
+     * {@code 90°} is south), so a positive rate turns the wind towards the next direction key in
+     * sequence. The turn saturates at {@code maxAltitude} along with the speed, so it can never
+     * accumulate into a full reversal however high the atmosphere reaches.
+     *
+     * @param altitude          absolute world Y (blocks)
+     * @param degreesPerHundred degrees of turn per 100 blocks of altitude (0 = none)
+     * @param maxAltitude       the altitude at which the shear stops turning
+     * @return the rotation in degrees; positive turns the wind clockwise when viewed from above
+     */
+    public static double shearDegrees(final double altitude, final double degreesPerHundred,
+            final double maxAltitude) {
+        return degreesPerHundred * shearAltitude(altitude, maxAltitude) / 100.0;
+    }
+
+    /**
+     * Rotates the horizontal part of a vector about world Y, in place.
+     *
+     * <p>Positive angles turn the vector towards +Z, which is the same sense the configured wind
+     * direction already uses ({@code 0°} is east, {@code 90°} is south). Y is left alone.
+     *
+     * @param vector the vector to rotate (reused)
+     * @param degrees the rotation
+     * @return {@code vector}
+     */
+    public static Vector3d rotateXZ(final Vector3d vector, final double degrees) {
+        if (degrees == 0.0) {
+            return vector;
+        }
+        final double radians = Math.toRadians(degrees);
+        final double cosine = Math.cos(radians);
+        final double sine = Math.sin(radians);
+        final double x = vector.x * cosine - vector.z * sine;
+        final double z = vector.x * sine + vector.z * cosine;
+        return vector.set(x, vector.y, z);
+    }
+
+    /**
      * Evaluates the field at a point and time.
      *
      * @param pressure    the pressure potential
@@ -362,6 +486,10 @@ public final class WindModel {
     /**
      * Evaluates the field at a point and time, with the leeward gust boost from stage 4.
      *
+     * <p>The perturbations are sized against the base wind itself, which is the right answer as long
+     * as the base is the dimension's. Stage 5 callers pass the pre-altitude-profile magnitude to the
+     * other overload instead.
+     *
      * @param pressure    the pressure potential
      * @param gust        the gust noise, or {@code null} to disable gusts
      * @param x           world X (blocks)
@@ -379,6 +507,40 @@ public final class WindModel {
     public static Result evaluate(final Noise3 pressure, final Noise3 gust, final double x, final double z,
             final double timeSeconds, final Vector3dc base, final double weather, final double leeBoost,
             final Settings settings, final Result out) {
+        return evaluate(pressure, gust, x, z, timeSeconds, base, base.length(), weather, leeBoost,
+                settings, out);
+    }
+
+    /**
+     * Evaluates the field at a point and time, with a perturbation scale separate from the base wind.
+     *
+     * <p>Two magnitudes are in play and they deliberately differ. {@code base} is the wind as it
+     * actually blows here — after the jet stream and the wind shear — and it is what goes into the
+     * result, what the gusts blow along, and what the clamp's budget is a multiple of. {@code
+     * reference} is the dimension's base wind <em>before</em> that altitude profile, and it is what
+     * sets how turbulent the air is. A jet stream is laminar: fast, not rough. Letting the
+     * perturbations scale with the jet would have made the air at the core several times stormier
+     * than at sea level, which is exactly backwards.
+     *
+     * @param pressure    the pressure potential
+     * @param gust        the gust noise, or {@code null} to disable gusts
+     * @param x           world X (blocks)
+     * @param z           world Z (blocks)
+     * @param timeSeconds world game time in seconds ({@code level.getGameTime() / 20.0})
+     * @param base        the wind here, after the altitude profile (horizontal; its Y is ignored)
+     * @param reference   the base wind's magnitude before the altitude profile, which sizes the
+     *                    pressure field and the gusts
+     * @param weather     rain/storm scaling applied to the perturbations only (1 = no weather);
+     *                    the base wind is never scaled by it
+     * @param leeBoost    extra gust amplitude as a fraction of the base gust, from
+     *                    {@link #leeGustBoost}; 0 on level or windward ground
+     * @param settings    the tunable inputs
+     * @param out         the result to fill (reused)
+     * @return {@code out}
+     */
+    public static Result evaluate(final Noise3 pressure, final Noise3 gust, final double x, final double z,
+            final double timeSeconds, final Vector3dc base, final double reference, final double weather,
+            final double leeBoost, final Settings settings, final Result out) {
         out.reset();
 
         final double baseMag = base.length();
@@ -394,7 +556,7 @@ public final class WindModel {
         final double gx = pressure.at(nx + GRAD_STEP, nz, nt) - pressure.at(nx - GRAD_STEP, nz, nt);
         final double gz = pressure.at(nx, nz + GRAD_STEP, nt) - pressure.at(nx, nz - GRAD_STEP, nt);
 
-        final double gain = settings.strength() * baseMag / GRAD_REFERENCE;
+        final double gain = settings.strength() * reference / GRAD_REFERENCE;
         out.field.set(-gz * gain, 0.0, gx * gain);
         out.field.mul(weather);
         out.total.add(out.field);
@@ -410,7 +572,7 @@ public final class WindModel {
                 final double ngt = timeSeconds / settings.gustPeriod();
                 final double along = gust.at(ngx, ngz, ngt);
                 final double across = gust.at(ngx + GUST_LATERAL_OFFSET_X, ngz + GUST_LATERAL_OFFSET_Z, ngt);
-                final double amp = settings.gustAmplitude() * baseMag * weather * (1.0 + leeBoost);
+                final double amp = settings.gustAmplitude() * reference * weather * (1.0 + leeBoost);
                 final double lateral = settings.gustLateralFraction() * across;
                 out.gust.set((dirX * along - dirZ * lateral) * amp, 0.0, (dirZ * along + dirX * lateral) * amp);
                 out.total.add(out.gust);

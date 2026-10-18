@@ -23,12 +23,22 @@ sub-level, then read by the physics hooks (`ServerSubLevelWindMixin`). It is bui
 | Orographic lift | config: `slopeProbe`, `slopeStrength`, `slopeHeightFalloff`, `leeGustBoost` | Air moving at `V` over ground rising at slope `s` climbs at **`V × s`** — ridge lift on a windward face, and the **sink** behind the ridge, since the same signed term covers both. The slope is the height difference between two columns `slopeProbe` (16) blocks either side of the point **along the base wind**, clamped to a 45° slope. It is measured on `MOTION_BLOCKING_NO_LEAVES`, **not** `OCEAN_FLOOR`: that map counts liquids and excludes leaves, so open water is flat ground (a shallow sea with a sloping seabed no longer invents lift under a boat) and the edge of a forest is not a cliff. Both this and the lee gust roughening are multiplied by **`exp(−h / slopeHeightFalloff)`** (one e-fold at 50 blocks): a ridge lifts the air beside it, not an aircraft crossing the range far above the crest, so both terms die out with altitude while the thermals above do not. On the lee side the gusts are also multiplied by `1 + leeGustBoost` (2× at a 45° lee slope), which is what makes flying near mountains dangerous. |
 | Vertical smoothing | config: `verticalSmoothSeconds` | The thermal and the orographic term are read from integer terrain heights and biome ids, so both **step** when the sampled column changes. They ease towards their target with a 1.5 s time constant instead, so flying past a ridge does not jolt. The gusts are deliberately left unsmoothed — they are meant to be quick. |
 | Height profile | config: `fadeHeight`, `surfaceCalm` | Wind ramps with altitude above the terrain: `surfaceCalm` (10%) at the surface to full at `fadeHeight` (32 blocks), smoothstep in between. Uses vanilla `OCEAN_FLOOR` heightmap (solid blocks; **water ignored**, **leaves count as terrain**), so a boat floating on the sea sits above its reference and still catches the wind, while a plane parked on the ground feels almost nothing. This is the **only** place `OCEAN_FLOOR` is used — the terrain-locked terms above deliberately use `MOTION_BLOCKING_NO_LEAVES` instead, because there the question is what the air is being forced over, and to the air neither the sea surface nor a canopy exists. A **submerged** sample point (centre block holds a fluid) gets **zero** wind. |
+| Jet stream | config: `jetAltitude`, `jetThickness`, `jetStrength` | A band of fast air at an **absolute** world Y (`jetAltitude` 220), not a height above the terrain — a jet is a property of the atmosphere and has nothing to do with the ground beneath it. The base wind is multiplied by up to `1 + jetStrength` (**3×** by default, so a 9 m/s core before the shear adds to it), easing smoothly to 1 at `jetAltitude ± jetThickness` (60) and to nothing outside. It rides on the dimension's prevailing direction and never turns it, and it does **not** scale the pressure field or the gusts: a jet is laminar — fast, not rough — so those are sized against the base wind *before* the altitude profile and the core comes out a smooth river of air rather than a storm. The jet still raises the clamp budget with it, because that budget is a ceiling and not a target. It does **not** touch the vertical terms: a jet is horizontal wind. |
+| Wind shear | config: `shearSpeedPer100`, `shearDegreesPer100`, `shearMaxAltitude` | The other half of altitude: how the wind differs between one height and another, again keyed on **absolute** world Y. Speed scales additively by `1 + shearSpeedPer100 × y / 100` (1.75× at Y 300 by default, floored at zero so a negative rate can still the air but never make it blow backwards), and the heading turns by `shearDegreesPer100 × y / 100` degrees (45° at Y 300), clockwise from above, the same sense the direction keys already use. Both saturate at `shearMaxAltitude` (300) and hold that value rather than vanishing — uncapped the rates ran to the top of Sable's atmosphere, where the default would give an 8× wind turned 450°, and the clamp bounds magnitude but never heading. Below Y 0 the shear reads as ground level, so the deep dark does not turn the wind the other way. The turn is applied to the base wind **before** anything measures the terrain, so the ridge lift at altitude is taken along the wind that actually crosses the ridge there. |
 | Fade-in | `WindField` | 0 to full over **5 seconds** after a sub-level's first sample, so nothing jolts on world load or when a sub-level enters a windy region. |
-| Cap | config: `maxWindMultiplier` | The last thing before the wind is stored: it is checked for finitude (a non-finite component zeroes the whole vector rather than reaching a rigid body), then kept within this multiple (**3×**) of the **prevailing wind at that point** — the base wind *after* the height profile, the fade-in and `windScale`, not the dimension's sea-level figure. Measuring the budget against the local prevailing wind means anything that raises the base at altitude raises the budget with it, so the cap keeps acting on the perturbations instead of clipping a number that belongs to a different altitude. The vector is scaled **as a whole**, never clipped per component, so the wind keeps its heading when the cap engages. Every term is bounded on its own, but they now **sum** — base, field, gusts (roughened by weather and by the lee side), thermal and orographic — so with the defaults the horizontal tops out at 3 × 3 = 9 m/s and the vertical at 2.5 + 9 × 0.5 = 7 m/s, about **11.4 m/s** before this clamp. |
+| Cap | config: `maxWindMultiplier` | The last thing before the wind is stored: it is checked for finitude (a non-finite component zeroes the whole vector rather than reaching a rigid body), then kept within this multiple (**3×**) of the **prevailing wind at that point** — the base wind *after* the jet, the shear, the height profile, the fade-in and `windScale`, not the dimension's sea-level figure. Measuring the budget against the local prevailing wind means anything that raises the base at altitude raises the budget with it, so the cap keeps acting on the perturbations instead of clipping a number that belongs to a different altitude. The vector is scaled **as a whole**, never clipped per component, so the wind keeps its heading when the cap engages. Every term is bounded on its own, but they now **sum** — base, field, gusts (roughened by weather and by the lee side), thermal and orographic — so with the defaults the horizontal tops out at 3 × 3 = 9 m/s and the vertical at 2.5 + 9 × 0.5 = 7 m/s, about **11.4 m/s** before this clamp, and proportionally more at altitude where the prevailing wind itself is stronger. |
 | Scale | config: `windScale` | Global multiplier applied to the total field. |
 
 If the terrain chunk under a sub-level is not loaded, the last known height factor is reused (a new
 sub-level starts from zero) instead of jumping to full wind.
+
+`jetAltitude` and `shearMaxAltitude` are **absolute** world Y, deliberately — a jet is a property of
+the atmosphere rather than of the ground under it, so no terrain lookup is needed and none is made.
+On the standard Overworld (sea level 62) the defaults land where they mean to: the core at 220, the
+shear saturating at 300. A datapack that raises the sea level moves those relative to the sky without
+moving them relative to the surface, which is the wrong way round. **When these become datapack
+driven, they should accept an offset from sea level (`sea_level + n`) alongside a bare Y**, so a
+raised world can raise its jet with it. Nothing to do for the standard Overworld.
 
 Direction convention: **0° = +X (east)**, **90° = +Z (south)**, in the XZ plane.
 
@@ -64,6 +74,12 @@ slopeHeightFalloff = 50.0
 leeGustBoost = 1.0
 verticalSmoothSeconds = 1.5
 thermalSkyClearance = 8.0
+jetAltitude = 220.0
+jetThickness = 60.0
+jetStrength = 2.0
+shearSpeedPer100 = 0.25
+shearDegreesPer100 = 15.0
+shearMaxAltitude = 300.0
 
 [dimensions.overworld]
     magnitude = 3.0
@@ -220,6 +236,49 @@ Stage 4 checks:
     a thermal does push up on it — at most `universalDrag` × `thermalStrength` ≈ 0.09 × 2.5 =
     0.23 m/s², and only 0.023 m/s² near the ground where `surfaceCalm` applies — which is far below
     gravity, but this is the check that proves it.
+16. **A boat near the shore is not becalmed (5)** — at water level, compare `/windfield info` over
+    open ocean against the same spot just off a shallow beach. The height profile measures against
+    `OCEAN_FLOOR`, which ignores water, so `heightFactor` there is the depth under the hull rather
+    than anything about the sea surface: at `surfaceCalm` 0.1 and `fadeHeight` 32, a boat in 23
+    blocks of water gets `smoothstep(23/32)` → about **83%** of full wind, but one in 3 blocks
+    (hull almost on the sand) gets `smoothstep(3/32)` → about **12%**, and sailing inshore bleeds it
+    away smoothly. **If this reads as described**, the fix is a separate water floor: when the
+    sample point sits on a fluid surface, use a `surfaceCalmWater` (0.6–0.8) instead of measuring
+    against the seabed at all. Water is smooth and the wind at its level really is stronger than over
+    rough ground, so that is both simpler and more realistic.
+
+Stage 5 checks:
+
+1. **The jet is a band, not a ladder** — climb straight up at one spot, running `/windfield info` as
+   you go. `jet` must read `1.000` at sea level, ease up to `3.000` exactly at `jetAltitude` (220),
+   ease back down to `1.000` at 160 and at 280 (the core ± `jetThickness`), and stay at `1.000`
+   above 280. It must ramp, never step.
+2. **The jet does not turn the wind** — the direction of `base` at the core must be the same heading
+   as at sea level, only larger. The jet multiplies; it never redirects.
+3. **Climbing turns the wind** — with the default 15° per 100 blocks, `turn` must read `45.0` at Y
+   300 and `33.0` at the jet core, and `base` must have rotated by exactly that much from its
+   configured heading. This is the check that the shear and the direction keys share a sense: a
+   positive rate has to turn the wind the same way a larger `direction` would.
+4. **Climbing speeds the wind up** — `shear` must read `1.75` at Y 300, and `base`'s magnitude must
+   grow to match. With the defaults the core runs 3 (base) × 3 (jet) × 1.55 (shear) = **13.95 m/s**,
+   which is a strong headwind but still one an aircraft can fly against.
+5. **The ground is untouched** — at sea level `jet` and `shear` both read `1.000` and `turn` `0.0`,
+   so everything below the jet band is exactly as it was before this stage.
+6. **The shear saturates instead of running away** — climb past Y 300: `shear` must hold `1.75` and
+   `turn` must hold `45.0` all the way to the top of Sable's atmosphere, not keep climbing. Then
+   drop below Y 0: `shear` must read `1.000` and `turn` `0.0`, not run backwards. Uncapped, Y 3000
+   gave an 8× wind turned 450°, and nothing downstream was going to catch it — the clamp bounds
+   magnitude but never heading.
+7. **The core is smooth, not stormy** — on flat ground, compare `/windfield info` at Y 40 (above the
+   fade, outside the jet band) against Y 220 (the core). `base` is three times bigger at the core,
+   but **`gust` must read the same magnitude at both**. That is the whole point of the jet being
+   laminar: the perturbations are sized against the wind before the altitude profile, so a jet is
+   fast air rather than rough air. If `gust` scales up with `base`, the coupling has come back.
+8. **The budget follows the jet up** — at the jet core in a thunderstorm, `total` must be allowed up
+   to 3 × the local prevailing wind (about 42 m/s with the defaults) rather than the 9 m/s available
+   at sea level, because the cap is a ceiling scaled to the air actually blowing here. The **vertical**
+   terms are the exception: `thermal` and `orographic` are not scaled by the jet, since a jet is
+   horizontal wind.
 
 Client checks:
 
@@ -229,6 +288,10 @@ Client checks:
    `↑` marker with the vertical component, and `↓` behind the ridge. The speed figure itself must
    still describe the **horizontal** wind only, so it does not jump when you cross a thermal.
 3. **Rebind** — Options → Controls → Ventus → *Toggle Wind Compass* accepts another key.
+4. **The compass tracks the shear** — climb from sea level to the jet core: the needle must sweep
+   smoothly through the ~33° of turn the defaults give, and the speed figure must climb into the high
+   teens. The fade and the jet are both smooth, so there is nothing for the needle to step on at
+   `fadeHeight` or at the edge of the band.
 
 ## Building & testing
 
@@ -239,6 +302,27 @@ $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot"
 .\gradlew runClient --console=plain
 .\gradlew runServer --console=plain
 ```
+
+## Performance baseline
+
+Ventus samples the field **once per sub-level per tick**, and stage 4 added a terrain height read
+(twice, for the two slope probes), a biome read, a sky-height read and a smoothstep to each of those.
+Whether that costs anything is a measurement, not an argument, so there is a baseline to compare
+later stages against.
+
+`spark` is in `run/mods` (`spark-1.10.124-neoforge.jar`, from Modrinth). The procedure:
+
+1. Build a world with **30–50 sub-levels** — a fleet of ships is the easiest way, since that is the
+   shape of load the mod actually ships with.
+2. `/spark profiler start --thread server --timeout 60`, leave it alone for the minute, and note the
+   **tick duration mean and p99** from the report it prints at the end.
+3. Repeat with the wind switched off: `.\gradlew runServer -Pventus.disableWind=true`. This is the
+   control, and it is a real control — `WindField.sample` returns before touching the heightmap, the
+   biome cache or the noise (`WindField.java:350`), so the difference between the two runs is
+   Ventus's cost and not Sable's.
+4. **Tick mean and p99, with and without, is the number.** The same pair is taken again after any
+   later stage, and the delta between the two pairs is the useful figure — a single absolute number
+   on its own says nothing, because Sable, Create and the world dominate it.
 
 ## How the hook works
 

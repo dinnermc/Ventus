@@ -83,7 +83,7 @@ public final class WindFieldCommand {
             // worth reporting. This makes the command usable to walk or fly around sampling biomes
             // and slopes without needing to be aboard anything.
             source.sendSuccess(() -> Component.literal(String.format(Locale.ROOT,
-                    "[Ventus] (no sub-level at the sampled position)%n%s", fieldLines(parts))), false);
+                    "[Ventus] (no sub-level at the sampled position)%n%s", fieldLines(parts, worldPos.y()))), false);
             return 1;
         }
 
@@ -123,7 +123,7 @@ public final class WindFieldCommand {
                         + "  air-relative=(%.3f, %.3f, %.3f)",
                 subLevel.getUniqueId(),
                 windActive, wind.x, wind.y, wind.z,
-                fieldLines(parts),
+                fieldLines(parts, worldPos.y()),
                 universalDrag, massText,
                 subLevelVelocity.x, subLevelVelocity.y, subLevelVelocity.z,
                 relativeVelocity.x, relativeVelocity.y, relativeVelocity.z)), false);
@@ -131,9 +131,10 @@ public final class WindFieldCommand {
     }
 
     /** The position-dependent part of the report, shared by the with- and without-sub-level paths. */
-    private static String fieldLines(final WindField.Breakdown parts) {
+    private static String fieldLines(final WindField.Breakdown parts, final double altitude) {
         return String.format(Locale.ROOT,
                 "  heightFactor=%.3f  weather=%.2f  capped=%s%n"
+                        + "  y=%.1f  jet=%.2fx  shear=%.2fx  turn=%.1f deg%n"
                         + "  slope=%s  leeBoost=%.2f%n"
                         + "  thermal=%.3f  orographic=%.3f%n"
                         + "  base=(%.3f, %.3f, %.3f)%n"
@@ -141,6 +142,7 @@ public final class WindFieldCommand {
                         + "  gust=(%.3f, %.3f, %.3f)%n"
                         + "  total=(%.3f, %.3f, %.3f)",
                 parts.heightFactor, parts.weather, parts.capped,
+                altitude, parts.jet, parts.shear, parts.shearDegrees,
                 Double.isNaN(parts.slope) ? "n/a" : String.format(Locale.ROOT, "%.3f", parts.slope),
                 parts.leeBoost,
                 parts.thermal, parts.orographic,

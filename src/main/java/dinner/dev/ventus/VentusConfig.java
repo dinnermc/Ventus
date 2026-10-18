@@ -51,6 +51,13 @@ public final class VentusConfig {
     public static final ModConfigSpec.DoubleValue VERTICAL_SMOOTH_SECONDS;
     public static final ModConfigSpec.DoubleValue THERMAL_SKY_CLEARANCE;
 
+    public static final ModConfigSpec.DoubleValue JET_ALTITUDE;
+    public static final ModConfigSpec.DoubleValue JET_THICKNESS;
+    public static final ModConfigSpec.DoubleValue JET_STRENGTH;
+    public static final ModConfigSpec.DoubleValue SHEAR_SPEED_PER_100;
+    public static final ModConfigSpec.DoubleValue SHEAR_DEGREES_PER_100;
+    public static final ModConfigSpec.DoubleValue SHEAR_MAX_ALTITUDE;
+
     public static final ModConfigSpec.DoubleValue OVERWORLD_MAGNITUDE;
     public static final ModConfigSpec.DoubleValue OVERWORLD_DIRECTION;
     public static final ModConfigSpec.DoubleValue NETHER_MAGNITUDE;
@@ -195,6 +202,48 @@ public final class VentusConfig {
                         "in a forest canopy they fade out over this distance instead of switching off.")
                 .defineInRange("thermalSkyClearance", 8.0, 0.0, 256.0);
 
+        JET_ALTITUDE = builder
+                .comment("Absolute world Y of the jet stream's core. Unlike everything else in this",
+                        "config this is keyed on height above the ground, because a jet is a band of",
+                        "fast air in the atmosphere and has nothing to do with the terrain below it.")
+                .defineInRange("jetAltitude", 220.0, -64.0, 2048.0);
+        JET_THICKNESS = builder
+                .comment("Half-width of the jet band, in blocks. The multiplier eases smoothly from",
+                        "its peak at jetAltitude down to none at jetAltitude ± this, and there is",
+                        "nothing outside. 0 switches the jet off entirely.")
+                .defineInRange("jetThickness", 60.0, 0.0, 2048.0);
+        JET_STRENGTH = builder
+                .comment("Extra wind multiplier at the jet's core. The base wind is multiplied by",
+                        "(1 + this) there, easing back to 1 at the edges of the band. The jet rides on",
+                        "the direction the dimension already blows; it does not change the heading,",
+                        "and it does not scale the gusts — a jet is fast, not rough. 2.0 puts the core",
+                        "at three times the base wind, a strong but still headwindable 9 m/s on the",
+                        "default 3 m/s; raise it on a server that wants a harder ceiling.")
+                .defineInRange("jetStrength", 2.0, 0.0, 100.0);
+        SHEAR_SPEED_PER_100 = builder
+                .comment("How much the wind's speed changes per 100 blocks of absolute altitude, as a",
+                        "multiplier: 0.25 means the wind at Y 300 is 1.75 times as fast as at Y 0.",
+                        "Negative calms the air as you climb. This is additive and floored at zero, so",
+                        "a negative rate can still the wind but never reverse it.")
+                .defineInRange("shearSpeedPer100", 0.25, -1.0, 100.0);
+        SHEAR_DEGREES_PER_100 = builder
+                .comment("How far the wind's heading turns per 100 blocks of absolute altitude, in",
+                        "degrees. Positive turns the wind clockwise from above, the same sense the",
+                        "direction keys already use (0 = east, 90 = south). 15.0 means the wind at",
+                        "Y 300 has turned 45 degrees from the wind at Y 0, so climbing changes your",
+                        "bearing.")
+                .defineInRange("shearDegreesPer100", 15.0, -360.0, 360.0);
+        SHEAR_MAX_ALTITUDE = builder
+                .comment("The absolute world Y above which the wind shear stops growing, both in speed",
+                        "and in turn — it holds the value it had there rather than disappearing. Above",
+                        "this, and below Y 0 which always reads as ground level, the shear is done.",
+                        "Without it the rates above run all the way to the top of Sable's atmosphere:",
+                        "at Y 3000 the defaults would give an 8x wind that had turned 450 degrees, and",
+                        "the clamp only bounds magnitude, never heading. Real shear saturates for the",
+                        "same reason — the boundary layer settles rather than veering for ever. 300",
+                        "caps it at 1.75x speed and 45 degrees of turn. 0 switches the shear off.")
+                .defineInRange("shearMaxAltitude", 300.0, 0.0, 3500.0);
+
         builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
                         "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
                 .push("dimensions");
@@ -315,6 +364,36 @@ public final class VentusConfig {
     /** @return blocks of clearance needed above the terrain for a point to see full sun */
     public static double thermalSkyClearance() {
         return THERMAL_SKY_CLEARANCE.get();
+    }
+
+    /** @return absolute world Y of the jet stream's core */
+    public static double jetAltitude() {
+        return JET_ALTITUDE.get();
+    }
+
+    /** @return half-width of the jet band in blocks (0 = the jet is off) */
+    public static double jetThickness() {
+        return JET_THICKNESS.get();
+    }
+
+    /** @return extra wind multiplier at the jet core */
+    public static double jetStrength() {
+        return JET_STRENGTH.get();
+    }
+
+    /** @return wind speed multiplier gained per 100 blocks of absolute altitude */
+    public static double shearSpeedPer100() {
+        return SHEAR_SPEED_PER_100.get();
+    }
+
+    /** @return degrees of heading turn per 100 blocks of absolute altitude */
+    public static double shearDegreesPer100() {
+        return SHEAR_DEGREES_PER_100.get();
+    }
+
+    /** @return the absolute world Y at which the wind shear saturates (0 = the shear is off) */
+    public static double shearMaxAltitude() {
+        return SHEAR_MAX_ALTITUDE.get();
     }
 
     /**

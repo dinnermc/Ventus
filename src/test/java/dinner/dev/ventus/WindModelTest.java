@@ -461,4 +461,175 @@ class WindModelTest {
         assertEquals(0.0, WindModel.clampToBudget(wind, 10.0, 3.0), 0.0);
         assertEquals(0.0, wind.length(), 0.0);
     }
+
+    @Test
+    void theJetIsSilentOutsideItsBand() {
+        // The band is the core plus or minus the half-width; past that edge there is no jet at all,
+        // so a ship at sea level and an aircraft far above the core see the same wind.
+        assertEquals(1.0, WindModel.jetFactor(0.0, 220.0, 60.0, 3.0), 1e-12);
+        assertEquals(1.0, WindModel.jetFactor(100.0, 220.0, 60.0, 3.0), 1e-12);
+        assertEquals(1.0, WindModel.jetFactor(280.0, 220.0, 60.0, 3.0), 1e-12);
+        assertEquals(1.0, WindModel.jetFactor(600.0, 220.0, 60.0, 3.0), 1e-12);
+    }
+
+    @Test
+    void theJetPeaksAtItsCoreAndEasesOut() {
+        // 3.0 of strength means the core runs four times the base wind, and the edges none of it.
+        assertEquals(4.0, WindModel.jetFactor(220.0, 220.0, 60.0, 3.0), 1e-12);
+        // Halfway across the band smoothstep is 0.5, so the multiplier is halfway up the ramp.
+        assertEquals(2.5, WindModel.jetFactor(250.0, 220.0, 60.0, 3.0), 1e-12);
+        // Symmetric: the same distance below the core gives the same answer.
+        assertEquals(2.5, WindModel.jetFactor(190.0, 220.0, 60.0, 3.0), 1e-12);
+    }
+
+    @Test
+    void aJetWithNoStrengthOrNoBandDoesNothing() {
+        assertEquals(1.0, WindModel.jetFactor(220.0, 220.0, 60.0, 0.0), 0.0);
+        assertEquals(1.0, WindModel.jetFactor(220.0, 220.0, 0.0, 3.0), 0.0);
+    }
+
+    @Test
+    void theJetIsContinuousThroughTheBand() {
+        // Climbing into the jet is the case that matters: an aircraft crossing the edge must feel a
+        // gradient, not a step. The steepest smoothstep gets is 1.5, so across a one-block step the
+        // multiplier can move by at most strength * 1.5 / thickness — anything larger is a jump.
+        final double limit = 3.0 * 1.5 / 60.0;
+
+        double previous = WindModel.jetFactor(100.0, 220.0, 60.0, 3.0);
+        for (double altitude = 101.0; altitude <= 340.0; altitude += 1.0) {
+            final double next = WindModel.jetFactor(altitude, 220.0, 60.0, 3.0);
+            assertTrue(Math.abs(next - previous) <= limit + 1e-9,
+                    "jump of " + (next - previous) + " at y=" + altitude);
+            previous = next;
+        }
+    }
+
+    @Test
+    void shearSpeedIsLinearInAltitudeAndFloorsAtZero() {
+        assertEquals(1.0, WindModel.shearFactor(0.0, 0.25, 300.0), 1e-12);
+        assertEquals(1.5, WindModel.shearFactor(200.0, 0.25, 300.0), 1e-12);
+        assertEquals(1.75, WindModel.shearFactor(300.0, 0.25, 300.0), 1e-12);
+        // Above the cap it holds rather than growing: the boundary layer settles, it does not keep
+        // speeding up for ever. This is what keeps it finite at the top of Sable's atmosphere.
+        assertEquals(1.75, WindModel.shearFactor(3000.0, 0.25, 300.0), 1e-12);
+        // Below Y 0 the shear reads as ground level rather than running the other way.
+        assertEquals(1.0, WindModel.shearFactor(-64.0, 0.25, 300.0), 1e-12);
+        // A strong negative rate can still the air, but it can never make the wind blow backwards.
+        assertEquals(0.0, WindModel.shearFactor(500.0, -1.0, 300.0), 0.0);
+    }
+
+    @Test
+    void shearTurnsWithAltitudeAtItsConfiguredRate() {
+        assertEquals(0.0, WindModel.shearDegrees(0.0, 15.0, 300.0), 1e-12);
+        assertEquals(45.0, WindModel.shearDegrees(300.0, 15.0, 300.0), 1e-12);
+        assertEquals(-45.0, WindModel.shearDegrees(300.0, -15.0, 300.0), 1e-12);
+        // The turn saturates alongside the speed, so however high the atmosphere reaches the wind
+        // can never accumulate into a full reversal. Uncapped this was 360 degrees.
+        assertEquals(45.0, WindModel.shearDegrees(2400.0, 15.0, 300.0), 1e-12);
+        // And below Y 0 it does not turn backwards either.
+        assertEquals(0.0, WindModel.shearDegrees(-64.0, 15.0, 300.0), 1e-12);
+    }
+
+    @Test
+    void theShearStaysContinuousBoundedAndFiniteAcrossTheWholeAtmosphere() {
+        // Sable's atmosphere runs to about 3500 blocks and the world floor is Y -64. Uncapped, shear
+        // reached an 8x wind turned 450 degrees at the top, and the clamp bounds magnitude but never
+        // heading — so this walks the entire range holding all three properties at once.
+        final double perHundred = 0.25;
+        final double degreesPerHundred = 15.0;
+        final double maxAltitude = 300.0;
+        final double maxTurn = Math.abs(degreesPerHundred) * maxAltitude / 100.0;
+        final double speedStep = Math.abs(perHundred) / 100.0;
+        final double turnStep = Math.abs(degreesPerHundred) / 100.0;
+
+        double previousSpeed = Double.NaN;
+        double previousTurn = Double.NaN;
+        for (double altitude = -64.0; altitude <= 3500.0; altitude += 1.0) {
+            final double speed = WindModel.shearFactor(altitude, perHundred, maxAltitude);
+            final double turn = WindModel.shearDegrees(altitude, degreesPerHundred, maxAltitude);
+
+            assertTrue(Double.isFinite(speed) && Double.isFinite(turn),
+                    "non-finite shear at y=" + altitude);
+            assertTrue(speed >= 0.0, "negative speed multiplier " + speed + " at y=" + altitude);
+            assertTrue(Math.abs(turn) <= maxTurn + 1e-9,
+                    "turn of " + turn + " degrees at y=" + altitude + " exceeds " + maxTurn);
+            assertTrue(speed <= 1.0 + speedStep * maxAltitude + 1e-9,
+                    "speed multiplier " + speed + " at y=" + altitude + " is past the cap");
+
+            if (!Double.isNaN(previousSpeed)) {
+                assertTrue(Math.abs(speed - previousSpeed) <= speedStep + 1e-9,
+                        "speed step of " + (speed - previousSpeed) + " at y=" + altitude);
+                assertTrue(Math.abs(turn - previousTurn) <= turnStep + 1e-9,
+                        "turn step of " + (turn - previousTurn) + " at y=" + altitude);
+            }
+            previousSpeed = speed;
+            previousTurn = turn;
+        }
+    }
+
+    @Test
+    void aJetMakesTheWindFasterButNotRougher() {
+        // A jet stream is laminar: fast, not rough. Both runs size their perturbations against the
+        // same reference — the dimension's base wind before the altitude profile — so the field and
+        // the gusts come out identical even though the wind itself is three times stronger up there.
+        // Sizing them against the profiled wind would have made the core several times stormier than
+        // sea level, which is backwards for a river of fast air.
+        final WindModel.Settings settings = settings(1500.0, 1200.0, 1.0, 3.0);
+        final Vector3d calm = new Vector3d(3.0, 0.0, 0.0);
+        final Vector3d jetted = new Vector3d(9.0, 0.0, 0.0);
+        final double reference = calm.length();
+
+        final WindModel.Result atSeaLevel = WindModel.evaluate(WindModelTest::pressure,
+                WindModelTest::gust, 0.0, 0.0, 0.0, calm, reference, DRY, 0.0, settings,
+                new WindModel.Result());
+        final WindModel.Result atTheCore = WindModel.evaluate(WindModelTest::pressure,
+                WindModelTest::gust, 0.0, 0.0, 0.0, jetted, reference, DRY, 0.0, settings,
+                new WindModel.Result());
+
+        assertEquals(atSeaLevel.gust.length(), atTheCore.gust.length(), 1e-12);
+        assertEquals(atSeaLevel.field.length(), atTheCore.field.length(), 1e-12);
+        // The wind itself, on the other hand, really is three times stronger up there.
+        assertTrue(atTheCore.total.length() > atSeaLevel.total.length() * 2.5);
+    }
+
+    @Test
+    void rotateXZFollowsTheSameSenseAsTheDirectionKeys() {
+        // The direction config reads 0 as east (+X) and 90 as south (+Z). A positive rotation has to
+        // walk a wind through that same order, or climbing would turn it opposite to the key.
+        final Vector3d east = new Vector3d(1.0, 0.0, 0.0);
+        WindModel.rotateXZ(east, 90.0);
+        assertEquals(0.0, east.x, 1e-12);
+        assertEquals(0.0, east.y, 0.0);
+        assertEquals(1.0, east.z, 1e-12);
+
+        final Vector3d south = new Vector3d(0.0, 0.0, 1.0);
+        WindModel.rotateXZ(south, 90.0);
+        assertEquals(-1.0, south.x, 1e-12);
+        assertEquals(0.0, south.y, 0.0);
+        assertEquals(0.0, south.z, 1e-12);
+    }
+
+    @Test
+    void rotatingPreservesTheWindSpeedAndLeavesTheVerticalAlone() {
+        // Shear changes where the wind points, not how hard it blows, and it must not touch the
+        // vertical component, which the thermals and the ridges own between them.
+        final Vector3d wind = new Vector3d(3.0, 1.5, 4.0);
+        final double before = wind.length();
+
+        WindModel.rotateXZ(wind, 37.0);
+
+        assertEquals(before, wind.length(), 1e-12);
+        assertEquals(1.5, wind.y, 1e-12);
+    }
+
+    @Test
+    void zeroDegreesLeavesTheWindExactlyAsItWas() {
+        final Vector3d wind = new Vector3d(1.25, 0.0, -0.75);
+
+        WindModel.rotateXZ(wind, 0.0);
+
+        assertEquals(1.25, wind.x, 0.0);
+        assertEquals(0.0, wind.y, 0.0);
+        assertEquals(-0.75, wind.z, 0.0);
+    }
 }

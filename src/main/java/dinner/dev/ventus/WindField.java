@@ -344,6 +344,42 @@ public final class WindField {
      * @param worldPos the sub-level's sample point, in world space
      * @param carrier  the sub-level's wind state
      */
+    /**
+     * Applies the jet stream and the wind shear to a dimension's base wind, in place.
+     *
+     * <p>Both are keyed on absolute altitude rather than height above ground: a jet is a band of fast
+     * air and shear is a gradient through the atmosphere, and neither is a property of the terrain
+     * below. They run on the base wind before the budget is sized from it, so the clamp keeps scaling
+     * with the air that actually blows at this height instead of clipping a sea-level figure. The
+     * shear also turns the direction, which means the terrain slope downstream is measured along the
+     * wind that really crosses the ridge here rather than the one configured at the ground.
+     *
+     * @param dest     the base wind, horizontal (modified in place)
+     * @param altitude absolute world Y (blocks)
+     * @param record   the breakdown to note the individual multipliers on, or {@code null} on the
+     *                 hot path where nothing is displayed
+     */
+    private static void applyAltitude(final Vector3d dest, final double altitude, final Breakdown record) {
+        final double maxAltitude = VentusConfig.shearMaxAltitude();
+        final double jet = WindModel.jetFactor(altitude, VentusConfig.jetAltitude(),
+                VentusConfig.jetThickness(), VentusConfig.jetStrength());
+        final double shear = WindModel.shearFactor(altitude, VentusConfig.shearSpeedPer100(),
+                maxAltitude);
+        final double turn = WindModel.shearDegrees(altitude, VentusConfig.shearDegreesPer100(),
+                maxAltitude);
+
+        if (record != null) {
+            record.jet = jet;
+            record.shear = shear;
+            record.shearDegrees = turn;
+        }
+
+        WindModel.rotateXZ(dest, turn);
+        if (jet * shear != 1.0) {
+            dest.mul(jet * shear);
+        }
+    }
+
     public static void sample(final ServerLevel level, final Vector3dc worldPos, final WindCarrier carrier) {
         final Vector3d dest = carrier.ventus$wind();
 
@@ -365,11 +401,18 @@ public final class WindField {
             return;
         }
 
+        // How turbulent the air is comes from the dimension's base wind, before the altitude profile.
+        // A jet stream is laminar — fast, not rough — so sizing the gusts against the profiled wind
+        // would have made the core several times stormier than sea level, which is backwards.
+        final double referenceMag = dest.length();
+        applyAltitude(dest, worldPos.y(), null);
+
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
 
-        // The dimension's base wind is still in dest here: its direction is what the terrain slope is
-        // measured along, and its magnitude is the starting point for the clamp's budget.
+        // After the jet and the shear, what is in dest is the wind as it actually blows at this
+        // altitude: its direction is what the terrain slope is measured along, and its magnitude is
+        // the starting point for the clamp's budget.
         final double baseMag = dest.length();
         final double windScale = VentusConfig.windScale();
         final double entry = entryRamp(level, carrier);
@@ -396,7 +439,8 @@ public final class WindField {
                 ? 0.0 : WindModel.leeGustBoost(slope, settings.leeGustBoost()) * decay;
 
         WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
-                level.getGameTime() / 20.0, dest, weatherMultiplier(level), leeBoost, settings, MODEL_RESULT);
+                level.getGameTime() / 20.0, dest, referenceMag, weatherMultiplier(level), leeBoost,
+                settings, MODEL_RESULT);
 
         verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z),
                 slope, decay, VERTICAL);
@@ -456,6 +500,9 @@ public final class WindField {
         dest.thermal = 0.0;
         dest.orographic = 0.0;
         dest.capped = false;
+        dest.jet = 1.0;
+        dest.shear = 1.0;
+        dest.shearDegrees = 0.0;
 
         if (!ENABLED) {
             return dest;
@@ -471,12 +518,15 @@ public final class WindField {
         if (dest.base.lengthSquared() == 0.0) {
             return dest;
         }
+        final double referenceMag = dest.base.length();
+        applyAltitude(dest.base, worldPos.y(), dest);
 
         final double fade = fadeAt(level, worldPos, 1.0);
         dest.heightFactor = fade;
 
-        // The base wind is in dest.base here; its magnitude, once the height profile and windScale
-        // are applied below, is the budget the clamp works from.
+        // After the jet and the shear, dest.base holds the wind as it actually blows here; its
+        // magnitude, once the height profile and windScale are applied below, is the budget the
+        // clamp works from.
         final double baseMag = dest.base.length();
         final double windScale = VentusConfig.windScale();
 
@@ -496,7 +546,8 @@ public final class WindField {
         dest.leeBoost = leeBoost;
 
         WindModel.evaluate(noise.pressure()::getValue, noise.gust()::getValue, worldPos.x(), worldPos.z(),
-                level.getGameTime() / 20.0, dest.base, weather, leeBoost, settings, MODEL_RESULT);
+                level.getGameTime() / 20.0, dest.base, referenceMag, weather, leeBoost, settings,
+                MODEL_RESULT);
 
         verticalAt(noise, level, worldPos, Math.hypot(MODEL_RESULT.total.x, MODEL_RESULT.total.z),
                 slope, decay, VERTICAL);
@@ -531,6 +582,12 @@ public final class WindField {
         public double thermal;
         /** The orographic up- or downdraft at this point, before the height profile (stage 4). */
         public double orographic;
+        /** The jet stream's multiplier on the base wind at this altitude (1 = outside the band). */
+        public double jet;
+        /** The wind shear's speed multiplier at this altitude (1 = no shear here). */
+        public double shear;
+        /** How far the wind's heading has turned at this altitude, in degrees (stage 5). */
+        public double shearDegrees;
         public boolean capped;
 
         /** Copies {@link #total} into {@code dest} and returns it. */
