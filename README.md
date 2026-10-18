@@ -141,6 +141,9 @@ the compass stays hidden.
 
 - the wind sampled for that sub-level, and `windActive` (whether it is non-zero)
 - the steady-state breakdown: `base`, `field`, `gust`, `heightFactor`, `capped`, and `total`
+- both heights of the sampled column: `groundHeight` (`MOTION_BLOCKING_NO_LEAVES`, what `slope` is
+  measured from) and `floorHeight` (`OCEAN_FLOOR`, what `heightFactor` ramps from). Leaves count for
+  the second and not the first, so their difference is the canopy — printed rather than inferred
 - `universalDrag` (the drag coefficient the `d*w` impulse uses) and the sub-level's mass
 - the sub-level's material velocity and the **air-relative velocity** Sable's lift & drag actually sees
 
@@ -346,7 +349,7 @@ Client checks:
 
 ## Verification for 1.0.0
 
-The checks that are still open, in the order to run them. Tick one only after you have actually
+The checks for 1.0.0, in the order to run them. Tick one only after you have actually
 seen the value with `/windfield info` open — the expected figure is repeated here so the list can
 be worked through without scrolling back up to the full description. If a check fails, write down
 the coordinates, altitude, time of day and weather **before** touching any code; that is enough to
@@ -356,8 +359,20 @@ tell a wrong model from a misreading.
       `0.000` and `orographic` `0.000`. The seabed must not manufacture an updraft under a boat.
       *(Verified: `slope=0.000`, `orographic=0.000`, `heightFactor=0.648` at Y 75. `slope` is not
       stuck at zero — the same build reads `1.000` at a cliff and `-0.156`/`-0.313` in open desert.)*
-- [ ] **13. A forest edge is not a hill** — skim a forest boundary at low altitude, crossing canopy
+- [x] **13. A forest edge is not a hill** — skim a forest boundary at low altitude, crossing canopy
       to clearing and back: `slope` stays near `0.000`. Leaves are excluded from the surface.
+      *(Verified headless over RCON, no client needed. The test world is `level-type=flat`, so the
+      ground is flat by construction and reads `groundHeight=-61.0` everywhere — which makes this
+      check sharper than a natural forest, since any non-zero `slope` has to come from the canopy.
+      A leaves-only canopy (`oak_leaves[persistent]`, y -51…-47) was built with its edge at X 0
+      across the probe span, perpendicular to the base wind, which is exactly +X below Y 0. Centre
+      at X 0, Y -55: `slope=0.000` while `floorHeight=-47.0` and `groundHeight=-61.0` — the probe
+      under the canopy and the probe in the clearing differ by 14 blocks of leaves, so a map that
+      counted them would read `0.438`. Controls at X -16 (both columns clear) and X 16 (both under
+      canopy) also read `0.000`. The gauge is not stuck: a 5-block dirt step on the same line reads
+      `0.156` = 5/32, and in that run the very same column reports `floorHeight=-47.0` with
+      `groundHeight=-56.0`. Everything was removed afterwards and the three readings went back to
+      `0.000` / `-61.0` / `-61.0`.)*
 - [x] **14. The cap keeps the heading of the air it is capping** — sheer cliff, `/weather thunder`,
       `/time set noon`, over a desert. The criterion is **not** that `total` matches `base`: the cap
       scales the whole vector rather than clipping components, so what has to survive is the
@@ -453,9 +468,10 @@ against the full mod set, the two `@ModifyArg` hooks are untouched, and `physics
 own `needsTicking()` guard before writing any impulse for a sub-level without floating blocks. What
 is left is the behaviour in the world.
 
-Five of the six are done, and the design question the earlier checks raised has been settled. Only
-**13 (a forest edge is not a hill)** remains — and it is the one that most needs a client, since it is
-a low skim along a canopy boundary.
+All six are done, and the design question the earlier checks raised has been settled. The last one,
+**13 (a forest edge is not a hill)**, turned out not to need a client: `/windfield info <pos>` reads
+from the server, and with both column heights printed the leaf question is answered from a console
+or RCON instead of being worked backwards out of the other numbers.
 
 ## Building & testing
 
