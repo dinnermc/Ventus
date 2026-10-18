@@ -2,6 +2,7 @@ package dinner.dev.ventus;
 
 import com.mojang.logging.LogUtils;
 import dinner.dev.ventus.client.VentusClient;
+import dinner.dev.ventus.client.VentusClientConfig;
 import dinner.dev.ventus.command.WindFieldCommand;
 import dinner.dev.ventus.network.VentusNetwork;
 import net.neoforged.api.distmarker.Dist;
@@ -45,6 +46,7 @@ public class Ventus {
         // The keybind, the HUD and the packet consumer only exist on the physical client. Guarded
         // here so a dedicated server never links against Minecraft's client classes.
         if (FMLEnvironment.dist == Dist.CLIENT) {
+            modContainer.registerConfig(ModConfig.Type.CLIENT, VentusClientConfig.SPEC);
             VentusClient.init(modEventBus);
         }
 

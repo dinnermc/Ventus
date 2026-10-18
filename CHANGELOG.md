@@ -21,7 +21,10 @@ read one per-dimension vector instead of the vanilla still air.
 - **Altitude profile**: a **jet stream** band and **wind shear** that turns the heading with height.
 - **Cap** (`maxWindMultiplier`) scales the whole vector rather than clipping components, so
   engaging it changes how hard the wind blows, never which way it points.
-- Optional client **wind-compass HUD**.
+- Optional client **wind line**: one line of text in a configurable corner with an eight position
+  arrow relative to the player, the speed in m/s and the climb marker above 0.5 m/s.
+  `ventus-client.toml` picks the corner; the line hides while the F3 screen is open and clears
+  itself on disconnect.
 
 ### Terrain
 
@@ -43,7 +46,7 @@ read one per-dimension vector instead of the vanilla still air.
 ### Verification
 
 - All six checks in README *Verification for 1.0.0* are ticked, with the readings recorded.
-- 44 unit tests, all passing.
+- 51 unit tests, all passing.
 
 ### Known limitations
 

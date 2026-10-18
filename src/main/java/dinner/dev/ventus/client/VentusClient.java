@@ -35,8 +35,10 @@ public final class VentusClient {
 
         NeoForge.EVENT_BUS.addListener(ClientTickEvent.Post.class, VentusClient::clientTick);
         NeoForge.EVENT_BUS.addListener(RenderGuiEvent.Post.class, WindHud::render);
-        NeoForge.EVENT_BUS.addListener(ClientPlayerNetworkEvent.LoggingOut.class,
-                event -> WindSyncState.invalidate());
+        NeoForge.EVENT_BUS.addListener(ClientPlayerNetworkEvent.LoggingOut.class, event -> {
+            WindSyncState.invalidate();
+            WindHud.reset();
+        });
     }
 
     /** Whether the compass is currently showing (toggled with {@link #toggleCompass}). */

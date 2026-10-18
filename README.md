@@ -91,6 +91,9 @@ shared by every world in that instance. To override it for a single world, drop 
 that world's `<world>/serverconfig/ventus-server.toml` instead — NeoForge reads that folder on top
 of the instance config, which is handy for per-world tuning on a dedicated server.
 
+The client has a second, much smaller file of its own, `config/ventus-client.toml`, which only
+places and formats the wind compass. It is described under *Wind compass (client)* below.
+
 ## Debug options
 
 These are **development aids, not configuration**. They bypass the config file.
@@ -113,16 +116,27 @@ These map to the `-Dventus.wind` / `-Dventus.disableWind` / `-Dventus.debugWind`
 
 ## Wind compass (client)
 
-A small circular compass sits at the **top centre of the HUD**:
+A single line of text sits **in a screen corner** — top left by default:
 
-- the rim is marked **N / E / S / W** in world terms, so it rotates with your view like a real
-  compass (north is red);
-- the **needle points downwind**, and its colour tracks the speed (grey → cyan → amber → red);
-- underneath it shows the speed (e.g. `3.2 m/s`) and the heading the wind is blowing **towards**
-  (e.g. `090° E`), or `CALM` when there is none;
-- once there is a meaningful **vertical** component the speed line grows an up/down marker
-  (`3.2 m/s ↑2.3`), so a thermal or ridge lift is visible without leaving the cockpit. The speed
-  figure itself stays horizontal, because that is what the needle and the dial describe.
+- an **eight position arrow** for the direction the wind is blowing, in your own frame of reference:
+  it points up when the wind blows the way you are looking, right when it blows to your right, and
+  so on around you;
+- the **speed** in m/s, coloured as the wind gets harder (grey → cyan → amber → red);
+- the **climb** once it is worth showing — `↑2.3` for rising air, `↓2.3` behind a ridge — and only
+  past 0.5 m/s, so a light breeze never clutters the line. The speed figure itself stays purely
+  **horizontal**, because that is what the arrow describes.
+
+An example: `↑ 3.2 m/s ↑1.3`. Still air is just a grey `0.0 m/s` with no arrow. The line is
+**cached**: it is rebuilt only when the figures it is made of change.
+
+`config/ventus-client.toml` has a single key:
+
+| key | default | meaning |
+| --- | --- | --- |
+| `corner` | `TOP_LEFT` | `TOP_LEFT`, `TOP_RIGHT`, `BOTTOM_LEFT` or `BOTTOM_RIGHT`. The line runs inwards from the corner, so nothing is ever drawn off screen. |
+
+The line **hides while the F3 debug screen is open**, which owns the same corner, and it forgets
+its state on disconnect, so a session's wind is never shown against the next server.
 
 **F8** shows/hides it (rebindable under *Options → Controls → Ventus*; it starts visible, and the
 toggle does not persist between sessions).
@@ -336,16 +350,20 @@ Stage 6 checks:
 
 Client checks:
 
-1. **Compass** — F8 hides/shows it; turn in place and the rim letters move while the needle stays
-   fixed on the wind; fly up to `fadeHeight` and the speed climbs; the needle must never jump.
-2. **Lift and sink are readable (4)** — climb a windward face at noon: the speed line should grow a
-   `↑` marker with the vertical component, and `↓` behind the ridge. The speed figure itself must
-   still describe the **horizontal** wind only, so it does not jump when you cross a thermal.
+1. **Wind line** — F8 hides/shows it; turn in place and the arrow swings through the eight positions
+   while the figure stays put; fly up to `fadeHeight` and the speed climbs; the arrow must never jump.
+2. **Lift and sink are readable (4)** — climb a windward face at noon: the line should grow a `↑`
+   marker with the vertical component, and `↓` behind the ridge. The speed figure itself must still
+   describe the **horizontal** wind only, so it does not jump when you cross a thermal.
 3. **Rebind** — Options → Controls → Ventus → *Toggle Wind Compass* accepts another key.
-4. **The compass tracks the shear** — climb from sea level to the jet core: the needle must sweep
-   smoothly through the ~33° of turn the defaults give, and the speed figure must climb into the high
-   teens. The fade and the jet are both smooth, so there is nothing for the needle to step on at
-    `fadeHeight` or at the edge of the band.
+4. **The arrow tracks the shear** — climb from sea level to the jet core: the wind turns through the
+   ~33° the defaults give, quantised into eight positions, so the arrow may step once across the whole
+   climb and no more, while the speed figure climbs into the high teens. The fade and the jet are both
+   smooth, so there is nothing for the arrow to step on at `fadeHeight` or at the edge of the band.
+5. **Placement** — F3 takes the line away, and `ventus-client.toml` moves it to any of the four
+   corners.
+6. **Stale data** — on a server with Ventus, then on one without: the line must not survive the
+   switch.
 
 ## Verification for 1.0.0
 
