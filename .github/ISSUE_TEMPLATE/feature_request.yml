@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an addition or change
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      placeholder: A use case in the world — flying, sailing, server tuning — rather than a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What do you propose?
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Does it stay within the scope of the mod?
+      options:
+        - Yes — wind and air only, no blocks/items/players
+        - Not sure
+        - No — it adds content outside "the air"
+    validations:
+      required: true

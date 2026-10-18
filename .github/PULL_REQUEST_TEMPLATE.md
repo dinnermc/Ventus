@@ -1,0 +1,4 @@
+- [ ] Tests are green (`./gradlew build`)
+- [ ] One change per PR
+- [ ] Documentation updated (`CHANGELOG.md` and/or the wiki)
+- [ ] Tested in game, if physics or hooks are touched

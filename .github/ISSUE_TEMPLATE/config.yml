@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: FAQ and known limitations
+    url: https://github.com/dinnermc/Ventus/wiki/FAQ-and-known-limitations
+    about: The storm wind reversal, the inshore wind ramp and the leeGustBoost limitation are documented here.
