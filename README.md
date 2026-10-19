@@ -69,8 +69,4 @@ Aeronautics.
 
 ## License
 
-Apache License 2.0. See `LICENSE`.
-
-[![Modrinth](https://img.shields.io/modrinth/v/ventus-mod?label=Modrinth&color=00AF5C)](https://modrinth.com/mod/ventus-mod)
-[![Build](https://github.com/dinnermc/Ventus/actions/workflows/build.yml/badge.svg)](https://github.com/dinnermc/Ventus/actions/workflows/build.yml)
-[![License](https://img.shields.io/github/license/dinnermc/Ventus)](LICENSE)
+Apache License 2.0. See [`LICENSE`](https://github.com/dinnermc/Ventus/blob/main/LICENSE).
