@@ -81,7 +81,7 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     private static final long[] ventus$debugNext = new long[4];
     private static boolean ventus$hookThreadLogged;
 
-    // Wind state, written once per tick by WindSampler. Left uninitialised on purpose: the JVM
+    // Wind state, written once per tick by WindSampler. Left uninitialised: the JVM
     // defaults (null / 0.0) are the right starting state, and this avoids depending on Mixin
     // copying field initialisers.
     @Unique
@@ -246,7 +246,7 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
      * (five points, {@code t = 1..8s}, error &lt; 0.3%). Applied at the centre of mass, so it produces
      * no torque (linear only, matching the native linear damping).
      * <p>
-     * Injected at {@code HEAD} on purpose: the body of {@code prePhysicsTick} is skipped for
+     * Injected at {@code HEAD}: the body of {@code prePhysicsTick} is skipped for
      * sub-levels without lift providers, contraptions, reaction wheels or floating-block ticking
      * (a plain block), but those bodies are still simulated and dragged natively. Applying the
      * impulse before that guard makes the wind drag global, exactly like the native universal drag.

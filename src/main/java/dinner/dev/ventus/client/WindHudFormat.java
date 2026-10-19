@@ -7,7 +7,7 @@ import java.util.Locale;
  * Everything about the wind HUD that can be decided without Minecraft: the angle smoothing, the
  * figures and the single line that ends up on screen.
  *
- * <p>Kept free of client classes on purpose, so the formatting and the smoothing can be unit tested
+ * <p>Kept free of client classes, so the formatting and the smoothing can be unit tested
  * without a running game. {@link WindHud} owns the drawing and caches whatever this class produces.
  */
 public final class WindHudFormat {
@@ -18,7 +18,7 @@ public final class WindHudFormat {
     public static final float CALM_EPSILON = 0.05f;
 
     /**
-     * Vertical wind must pass this (m/s) before the climb marker appears. Low on purpose: a real
+     * Vertical wind must pass this (m/s) before the climb marker appears. Kept low: a real
      * variometer reads tenths, and with the defaults a ridge under a 3 m/s wind only lifts about
      * 0.45 m/s, so anything above a tenth is worth showing.
      */

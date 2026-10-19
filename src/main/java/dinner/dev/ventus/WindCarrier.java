@@ -6,11 +6,10 @@ import org.joml.Vector3d;
  * Implemented (via mixin) by Sable's {@code ServerSubLevel} to hold the wind state sampled for it
  * once this server tick.
  * <p>
- * The state is written by {@link WindSampler} on the server thread and read by the physics hooks in
- * {@code ServerSubLevelWindMixin}, which run on the same thread (see {@link WindSampler}). The
- * fields are deliberately <b>not</b> initialised in the interface implementation: the JVM defaults
- * (null / 0.0) are exactly the desired starting state for a freshly created sub-level, and this
- * way the mixin never depends on Mixin copying field initialisers.
+ * Written by {@link WindSampler} on the server thread and read by the physics hooks in
+ * {@code ServerSubLevelWindMixin}, also on the server thread (see {@link WindSampler}). The fields
+ * are left uninitialised: the JVM defaults (null / 0.0) are the right starting state for a fresh
+ * sub-level, and this way the mixin never depends on Mixin copying field initialisers.
  * <ul>
  *     <li>{@link #ventus$wind()} — the wind vector, created lazily on first use;</li>
  *     <li>{@link #ventus$fade()} — the last height profile factor, {@code 0} until the terrain is
@@ -18,9 +17,9 @@ import org.joml.Vector3d;
  *     to full wind;</li>
  *     <li>{@link #ventus$firstSample()} — game time of the first sample, or {@code null} while
  *     unsampled, driving the temporal fade-in;</li>
- *     <li>{@link #ventus$vertical()} — the smoothed stage-4 vertical wind (thermal + orographic),
- *     {@code 0} until first sampled. Smoothed rather than raw because both terms are derived from
- *     integer terrain heights, which would otherwise make the updraft step as the columns are read.</li>
+ *     <li>{@link #ventus$vertical()} — the smoothed vertical wind (thermal + orographic),
+ *     {@code 0} until first sampled. Smoothed because both terms come from integer terrain heights,
+ *     which would otherwise step the updraft as the columns are read.</li>
  * </ul>
  */
 public interface WindCarrier {

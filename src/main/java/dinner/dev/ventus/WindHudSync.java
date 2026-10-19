@@ -94,7 +94,7 @@ public final class WindHudSync {
     }
 
     /**
-     * The sub-level this player is standing in, riding, or tracking — deliberately the same lookup
+     * The sub-level this player is standing in, riding, or tracking — the same lookup
      * {@code /windfield info} uses, so the instrument and the command can never disagree about
      * which sub-level is meant.
      */

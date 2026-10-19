@@ -6,15 +6,10 @@ import net.neoforged.neoforge.common.ModConfigSpec;
 import org.joml.Vector3d;
 
 /**
- * The server-side config ({@code config/ventus-server.toml}).
- * <p>
- * Everything the wind field needs is here: a global multiplier and, per dimension, a base
- * magnitude (m/s) and a base direction (degrees). The direction convention is
- * <b>0&deg; = +X (east)</b>, <b>90&deg; = +Z (south)</b>, measured in the XZ plane, so the default
- * Overworld wind ({@code magnitude=3, direction=0}) blows due east at 3 m/s.
- * <p>
- * The {@code -Dventus.wind=x,y,z} system property overrides this config entirely (see
- * {@link WindField}); it is a debug aid, not a config value.
+ * The server-side config ({@code config/ventus-server.toml}). Per dimension: a base magnitude
+ * (m/s) and a direction (degrees, 0 = +X east, 90 = +Z south; the default Overworld wind blows
+ * due east at 3 m/s). The {@code -Dventus.wind=x,y,z} system property overrides this config
+ * entirely — see {@link WindField}.
  */
 public final class VentusConfig {
     private VentusConfig() {
@@ -70,99 +65,77 @@ public final class VentusConfig {
         final ModConfigSpec.Builder builder = new ModConfigSpec.Builder();
 
         ENABLED = builder
-                .comment("Master switch: when false Ventus produces no wind at all.",
-                         "Sub-levels drift nowhere, the /windfield commands still work and read zero,",
-                         "and the client HUD disappears. Use this to turn Ventus off on a server that",
-                         "already gets its weather from another mod — with Aeronautics: Wind and",
-                         "Weather or PMWeather Aeronautics installed, the two wind vectors would",
-                         "otherwise add up. No restart needed: the file is hot-reloaded.")
+                .comment("Master switch: off = zero wind everywhere and the client HUD disappears. Hands "
+                        + "the air to another wind mod; hot-reloaded, no restart needed.")
                 .define("enabled", true);
 
         WIND_SCALE = builder
-                .comment("Global multiplier applied to the sampled wind field.",
-                        "Does not affect the -Dventus.wind debug override.")
+                .comment("Global multiplier applied to the sampled wind field (not the -Dventus.wind override).")
                 .defineInRange("windScale", 1.0, 0.0, 100.0);
 
         FADE_HEIGHT = builder
-                .comment("Altitude above the terrain at which the wind reaches full strength (blocks).",
-                        "Below this the wind ramps in smoothly down to surfaceCalm at the surface.")
+                .comment("Altitude above the terrain where the wind reaches full strength (blocks); below "
+                        + "it the wind ramps down to surfaceCalm at the surface.")
                 .defineInRange("fadeHeight", 32.0, 1.0, 512.0);
 
         SURFACE_CALM = builder
-                .comment("Fraction of the wind that still blows at the terrain surface (0 = calm ground).",
-                        "Low values stop a grounded sub-level from sliding while allowing a little",
-                        "weathervaning. Does not apply to submerged sub-levels, which get no wind.")
+                .comment("Fraction of the wind still blowing at the terrain surface (0 = calm ground); "
+                        + "submerged sub-levels get no wind.")
                 .defineInRange("surfaceCalm", 0.1, 0.0, 1.0);
 
         FIELD_SCALE = builder
-                .comment("Map scale (blocks): the size of the largest wind structures.",
-                        "Smaller values give more, tighter weather systems; larger values give broad,",
-                        "slowly-varying wind. It resizes the systems and nothing else: the heading",
-                        "comes from 'direction', the strength from 'fieldStrength'.")
+                .comment("Map scale (blocks) of the largest wind structures: smaller values give more, "
+                        + "tighter weather systems.")
                 .defineInRange("fieldScale", 1500.0, 100.0, 100000.0);
 
         FIELD_PERIOD = builder
-                .comment("Seconds for the pressure field to evolve noticeably.",
-                        "Larger values make the wind steadier over time.")
+                .comment("Seconds for the pressure field to evolve noticeably; larger values give steadier wind.")
                 .defineInRange("fieldPeriod", 1200.0, 20.0, 86400.0);
 
         FIELD_STRENGTH = builder
-                .comment("Strength of the pressure-field perturbation, as a multiple of the base wind.",
-                        "1.0 = the typical deflection is the same size as the base wind (the field",
-                        "noticeably turns and modulates it). 0.0 disables the field (base wind only).",
-                        "Note that rain and thunder scale this perturbation but not the base wind, so",
-                        "in a storm the field can outweigh the base and point against 'direction'.",
-                        "'maxWindMultiplier' caps how large the total gets, not which way it blows.")
+                .comment("Strength of the pressure-field perturbation as a multiple of the base wind; "
+                        + "0 disables the field.")
                 .defineInRange("fieldStrength", 1.0, 0.0, 5.0);
 
         MAX_WIND_MULTIPLIER = builder
-                .comment("Hard cap: the total wind never exceeds this multiple of the dimension's base",
-                        "wind magnitude. Protects against extreme noise values or bad parameters.")
+                .comment("Hard cap: the total wind never exceeds this multiple of the dimension's base "
+                        + "wind magnitude.")
                 .defineInRange("maxWindMultiplier", 3.0, 1.0, 10.0);
 
         GUST_SCALE = builder
-                .comment("Map scale (blocks) of the gusts: smaller than fieldScale, so gusts are",
-                        "local and fiddly rather than broad weather systems.")
+                .comment("Map scale (blocks) of the gusts; smaller than fieldScale, so gusts are local.")
                 .defineInRange("gustScale", 150.0, 20.0, 10000.0);
 
         GUST_PERIOD = builder
-                .comment("Seconds for a gust to build and fade. Much shorter than fieldPeriod.")
+                .comment("Seconds for a gust to build and fade.")
                 .defineInRange("gustPeriod", 120.0, 5.0, 86400.0);
 
         GUST_AMPLITUDE = builder
-                .comment("Gust strength as a fraction of the base wind. 0.0 disables gusts; 0.3-0.4",
-                        "gives a noticeable but not disorienting puffiness.")
+                .comment("Gust strength as a fraction of the base wind; 0 disables gusts.")
                 .defineInRange("gustAmplitude", 0.35, 0.0, 2.0);
 
         GUST_LATERAL_FRACTION = builder
-                .comment("How much of the gust pushes sideways rather than along the wind.",
-                        "0.0 = purely a speed change; small values (0.2-0.4) add a little wander.")
+                .comment("How much of a gust pushes sideways rather than along the wind; 0 = purely a "
+                        + "speed change.")
                 .defineInRange("gustLateralFraction", 0.3, 0.0, 1.0);
 
         RAIN_MULTIPLIER = builder
-                .comment("Strength the pressure field and the gusts reach at full rain, as a multiple of",
-                        "their dry-weather strength. It is applied against the dimension's rain LEVEL,",
-                        "which vanilla fades in and out over ~5 seconds, so the wind builds and eases",
-                        "instead of stepping. The base wind itself is not touched. The perturbation it",
-                        "is added to does grow though, so at these multipliers the combined wind can",
-                        "end up pointing against the dimension's 'direction'.")
+                .comment("Strength the pressure field and the gusts reach at full rain, as a multiple of "
+                        + "their dry strength; eased in by vanilla's ~5 s rain fade. The base wind is not touched.")
                 .defineInRange("rainMultiplier", 1.5, 1.0, 10.0);
 
         THUNDER_MULTIPLIER = builder
-                .comment("Strength reached at full thunder, applied on top of rainMultiplier. Vanilla's",
-                        "thunder level is already gated by the rain level, so a storm multiplies the",
-                        "field by rainMultiplier * thunderMultiplier and dry weather leaves it at 1.0.")
+                .comment("Extra strength at full thunder, on top of rainMultiplier (vanilla's thunder "
+                        + "level is already gated by the rain level).")
                 .defineInRange("thunderMultiplier", 1.6, 1.0, 10.0);
 
         THERMAL_STRENGTH = builder
-                .comment("Maximum updraft of a thermal, in m/s, over hot ground in full sun with a clear",
-                        "sky. Real thermals reach 2-6 m/s; 0.0 disables them. The actual value at a point",
-                        "is this multiplied by the sun, the biome's warmth and the dryness, and carved",
-                        "into bubbles by noise, so this is the ceiling rather than a typical reading.")
+                .comment("Ceiling of a thermal updraft in m/s over hot ground in full sun with a clear "
+                        + "sky; 0 disables thermals.")
                 .defineInRange("thermalStrength", 2.5, 0.0, 20.0);
 
         THERMAL_SCALE = builder
-                .comment("Map scale (blocks) of the thermal bubbles: how far apart they are.")
+                .comment("Map scale (blocks) of the thermal bubbles.")
                 .defineInRange("thermalScale", 200.0, 20.0, 10000.0);
 
         THERMAL_PERIOD = builder
@@ -170,9 +143,8 @@ public final class VentusConfig {
                 .defineInRange("thermalPeriod", 90.0, 5.0, 86400.0);
 
         THERMAL_COLD_TEMPERATURE = builder
-                .comment("Biome base temperature at or below which there are no thermals at all.",
-                        "Vanilla ranges roughly 0.2 (snowy) to 2.0 (desert, badlands, jungle);",
-                        "0.8 keeps temperate biomes out of it.")
+                .comment("Biome base temperature at or below which there are no thermals (vanilla ranges "
+                        + "roughly 0.2 snowy to 2.0 desert).")
                 .defineInRange("thermalColdTemperature", 0.8, -2.0, 30.0);
 
         THERMAL_HOT_TEMPERATURE = builder
@@ -180,87 +152,62 @@ public final class VentusConfig {
                 .defineInRange("thermalHotTemperature", 2.0, -2.0, 30.0);
 
         SLOPE_PROBE = builder
-                .comment("How far upwind and downwind the terrain is sampled to measure its slope, in",
-                        "blocks. Larger values smooth blocky cliffs away; smaller values react to local",
-                        "terrain but can read a single-block step as a cliff.")
+                .comment("Blocks either side of a point used to measure the terrain slope; larger values "
+                        + "smooth blocky cliffs away.")
                 .defineInRange("slopeProbe", 16.0, 1.0, 256.0);
 
         SLOPE_STRENGTH = builder
-                .comment("Multiplier on the physical orographic lift: air moving at V over ground rising",
-                        "at slope s climbs at V * s, so 1.0 is the real thing. Below 1 tames Minecraft's",
-                        "vertical cliffs, above 1 exaggerates them. Negative slopes give downdraft.")
+                .comment("Multiplier on the physical orographic lift (1.0 = the real thing; negative "
+                        + "slopes give downdraft).")
                 .defineInRange("slopeStrength", 0.5, -5.0, 5.0);
 
         SLOPE_HEIGHT_FALLOFF = builder
-                .comment("How fast the orographic lift and the leeward turbulence die out with altitude",
-                        "above the terrain, in blocks: both are multiplied by exp(-height / this). A ridge",
-                        "pushes the air right beside it, not an aircraft crossing the range far above the",
-                        "crest. At 50 a plane 150 blocks up feels about 5% of the lift at the ridge.")
+                .comment("E-folding distance in blocks for the orographic lift and the leeward turbulence "
+                        + "above the terrain: both are multiplied by exp(-height / this).")
                 .defineInRange("slopeHeightFalloff", 50.0, 1.0, 1000.0);
 
         LEE_GUST_BOOST = builder
-                .comment("Extra gust amplitude behind a ridge, as a fraction of the base gust, at a slope",
-                        "of -1 or steeper (0 = none). Windward ground is smooth lift and gets nothing.",
-                        "1.0 doubles the gusts on the lee side.")
+                .comment("Extra gust amplitude behind a ridge as a fraction of the base gust, at a slope "
+                        + "of -1 or steeper (0 = none).")
                 .defineInRange("leeGustBoost", 1.0, 0.0, 10.0);
 
         VERTICAL_SMOOTH_SECONDS = builder
-                .comment("Time constant, in seconds, over which the thermal and orographic updrafts ease",
-                        "towards their target. Both are derived from integer terrain heights, so without",
-                        "this the vertical wind would step as the sampled columns change. Gusts are not",
-                        "smoothed: they are meant to be quick.")
+                .comment("Seconds over which the thermal and orographic updrafts ease towards their "
+                        + "target (0 = no smoothing).")
                 .defineInRange("verticalSmoothSeconds", 1.5, 0.0, 60.0);
 
         THERMAL_SKY_CLEARANCE = builder
-                .comment("How far above the terrain a point must be before it sees the full sun for",
-                        "thermal purposes, in blocks. Thermals need direct sun, so under a roof or deep",
-                        "in a forest canopy they fade out over this distance instead of switching off.")
+                .comment("Blocks of clearance above the terrain before a point sees the full sun for "
+                        + "thermal purposes.")
                 .defineInRange("thermalSkyClearance", 8.0, 0.0, 256.0);
 
         JET_ALTITUDE = builder
-                .comment("Absolute world Y of the jet stream's core. Unlike everything else in this",
-                        "config this is keyed on height above the ground, because a jet is a band of",
-                        "fast air in the atmosphere and has nothing to do with the terrain below it.")
+                .comment("Absolute world Y of the jet stream's core (keyed on absolute altitude, not "
+                        + "height above the ground).")
                 .defineInRange("jetAltitude", 220.0, -64.0, 2048.0);
         JET_THICKNESS = builder
-                .comment("Half-width of the jet band, in blocks. The multiplier eases smoothly from",
-                        "its peak at jetAltitude down to none at jetAltitude ± this, and there is",
-                        "nothing outside. 0 switches the jet off entirely.")
+                .comment("Half-width of the jet band in blocks: the multiplier eases from its peak at "
+                        + "jetAltitude to none at jetAltitude +/- this. 0 switches the jet off.")
                 .defineInRange("jetThickness", 60.0, 0.0, 2048.0);
         JET_STRENGTH = builder
-                .comment("Extra wind multiplier at the jet's core. The base wind is multiplied by",
-                        "(1 + this) there, easing back to 1 at the edges of the band. The jet rides on",
-                        "the direction the dimension already blows; it does not change the heading,",
-                        "and it does not scale the gusts — a jet is fast, not rough. 2.0 puts the core",
-                        "at three times the base wind, a strong but still headwindable 9 m/s on the",
-                        "default 3 m/s; raise it on a server that wants a harder ceiling.")
+                .comment("Extra wind multiplier at the jet's core (the base wind is multiplied by 1 + "
+                        + "this, easing back to 1 at the band edges). Speed only — the gusts are not scaled.")
                 .defineInRange("jetStrength", 2.0, 0.0, 100.0);
         SHEAR_SPEED_PER_100 = builder
-                .comment("How much the wind's speed changes per 100 blocks of absolute altitude, as a",
-                        "multiplier: 0.25 means the wind at Y 300 is 1.75 times as fast as at Y 0.",
-                        "Negative calms the air as you climb. This is additive and floored at zero, so",
-                        "a negative rate can still the wind but never reverse it.")
+                .comment("Wind speed change per 100 blocks of absolute altitude, as a multiplier; "
+                        + "additive and floored at zero, so it can still the wind but never reverse it.")
                 .defineInRange("shearSpeedPer100", 0.25, -1.0, 100.0);
         SHEAR_DEGREES_PER_100 = builder
-                .comment("How far the wind's heading turns per 100 blocks of absolute altitude, in",
-                        "degrees. Positive turns the wind clockwise from above, the same sense the",
-                        "direction keys already use (0 = east, 90 = south). 15.0 means the wind at",
-                        "Y 300 has turned 45 degrees from the wind at Y 0, so climbing changes your",
-                        "bearing.")
+                .comment("Degrees the wind's heading turns per 100 blocks of absolute altitude (positive "
+                        + "turns clockwise from above, the same sense the direction keys use).")
                 .defineInRange("shearDegreesPer100", 15.0, -360.0, 360.0);
         SHEAR_MAX_ALTITUDE = builder
-                .comment("The absolute world Y above which the wind shear stops growing, both in speed",
-                        "and in turn — it holds the value it had there rather than disappearing. Above",
-                        "this, and below Y 0 which always reads as ground level, the shear is done.",
-                        "Without it the rates above run all the way to the top of Sable's atmosphere:",
-                        "at Y 3000 the defaults would give an 8x wind that had turned 450 degrees, and",
-                        "the clamp only bounds magnitude, never heading. Real shear saturates for the",
-                        "same reason — the boundary layer settles rather than veering for ever. 300",
-                        "caps it at 1.75x speed and 45 degrees of turn. 0 switches the shear off.")
+                .comment("Absolute world Y above which the shear stops growing and holds its value "
+                        + "rather than disappearing; 0 switches the shear off.")
                 .defineInRange("shearMaxAltitude", 300.0, 0.0, 3500.0);
 
-        builder.comment("Base wind per dimension. Magnitude is in m/s (blocks/second).",
-                        "Direction is in degrees: 0 = +X (east), 90 = +Z (south).")
+        builder.comment("Base wind per dimension. Magnitude in m/s (blocks/second); direction in degrees: "
+                        + "0 = +X (east), 90 = +Z (south).")
                 .push("dimensions");
 
         builder.push("overworld");

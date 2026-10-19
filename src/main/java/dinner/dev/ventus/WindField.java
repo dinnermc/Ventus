@@ -20,37 +20,13 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The wind field (stage 1).
+ * The wind field for one sub-level sample, in <b>blocks per second</b> (Sable's physics unit,
+ * {@code 1 block/s = 1 m/s}; a light breeze is 2-6, a storm is 20+). Built from the configured
+ * per-dimension base wind, a height profile ({@link #fadeAt}), a temporal fade-in
+ * ({@link #entryRamp}) and {@link VentusConfig#windScale()}, with pressure field, gusts, weather,
+ * thermals and orographic lift on top; a submerged sample point yields zero wind.
  * <p>
- * Wind is expressed in <b>blocks per second</b> (Sable's physics unit, {@code 1 block/s = 1 m/s}).
- * For scale: a light breeze is 2-6, a strong wind is 10-15 and a storm is 20+.
- * <p>
- * The field is the product of four factors:
- * <ol>
- *     <li>a per-dimension <b>base wind</b> (magnitude + direction) from {@link VentusConfig};</li>
- *     <li>a <b>height profile</b> (see {@link #fadeAt}): the wind ramps from
- *     {@link VentusConfig#surfaceCalm()} at the terrain surface up to full at
- *     {@link VentusConfig#fadeHeight()} blocks above it. The reference surface is vanilla's
- *     {@link Heightmap.Types#OCEAN_FLOOR} (solid blocks, <b>water and leaves ignored edge cases
- *     aside</b>): a boat floating on the sea sits <em>above</em> its reference and still catches the
- *     wind, while a plane parked on the ground feels almost nothing. Leaves count as solid terrain,
- *     so a plane skimming a forest sees the canopy as ground (trees shelter the wind). Note that the
- *     terrain-locked stage-4 terms deliberately use a <em>different</em> map, see
- *     {@link #surfaceAt};</li>
- *     <li>a <b>temporal fade-in</b> (see {@link #entryRamp}): the wind ramps from 0 to full over
- *     {@link #ENTRY_RAMP_SECONDS} seconds after a sub-level's first sample, so nothing jolts when a
- *     world loads or a sub-level enters a windy region;</li>
- *     <li>the global {@link VentusConfig#windScale()} multiplier.</li>
- * </ol>
- * A submerged sample point (the centre block holds a fluid) yields zero wind, so a diving
- * sub-level feels nothing.
- * <p>
- * Stages 2 and 3 add a pressure field, gusts, and rain/thunder, all on top of this base.
- * <p>
- * <b>Debug override.</b> {@code -Dventus.wind=x,y,z} replaces the whole field with a fixed vector
- * (no base wind, no height profile, no fade-in, no scale) so a specific vector can be dialled in
- * from the command line. {@code -Dventus.disableWind=true} forces a calm (zero) wind. Both are
- * development aids.
+ * {@code -Dventus.wind=x,y,z} overrides the whole field, {@code -Dventus.disableWind=true} forces calm.
  */
 public final class WindField {
     private WindField() {
@@ -68,23 +44,18 @@ public final class WindField {
     private static final Vector3d FIXED_OVERRIDE = parseOverride(System.getProperty("ventus.wind"));
 
     /**
-     * Both kill switches together: the static {@code -Dventus.disableWind} system property and the
-     * hot-reloadable {@code enabled} config key. The system property is frozen at class-load and is
-     * a development aid; the config key is what a server admin uses, and it can be flipped without a
-     * restart. Every entry point into the field goes through here so the two can never disagree.
+     * Both kill switches: the {@code -Dventus.disableWind} system property (frozen at class-load)
+     * and the hot-reloadable {@code enabled} config key. Every entry point into the field goes
+     * through here so the two can never disagree.
      */
     private static boolean windEnabled() {
         return ENABLED && VentusConfig.enabled();
     }
 
     /**
-     * Session-only base-wind overrides, keyed by dimension, set by {@code /windfield set}.
-     * <p>
-     * These sit in front of {@link VentusConfig#baseWind} and are never written to the config file:
-     * they exist so an admin or a video shoot can dial in a known vector without editing anything,
-     * and they die with the server. Everything downstream — the jet, the shear, the field, the
-     * budget, the commands and the HUD — reads them through {@link #baseWind}, so an override looks
-     * exactly like a configured base wind and nothing has to special-case it.
+     * Session-only base-wind overrides, keyed by dimension, set by {@code /windfield set} and
+     * never written to the config file. Everything downstream reads them through
+     * {@link #baseWind}, so an override looks like a configured base wind.
      */
     private static final Map<ResourceKey<Level>, Vector3d> BASE_OVERRIDE = new HashMap<>();
 
@@ -112,10 +83,9 @@ public final class WindField {
     }
 
     /**
-     * The base wind a dimension actually blows: the {@code /windfield set} override if there is one,
-     * otherwise the configured {@code [dimensions]} entry. The single place both {@link #sample} and
-     * {@link #breakdown} go through, so the override can never be applied in one path and forgotten
-     * in the other.
+     * The base wind a dimension actually blows: the {@code /windfield set} override if there is
+     * one, otherwise the configured {@code [dimensions]} entry. Both {@link #sample} and
+     * {@link #breakdown} go through this one place.
      */
     private static Vector3d baseWind(final ServerLevel level, final Vector3d dest) {
         final Vector3d override = BASE_OVERRIDE.get(level.dimension());
@@ -176,9 +146,8 @@ public final class WindField {
     private static final Breakdown BREAKDOWN = new Breakdown();
 
     /**
-     * Rain/storm scaling for the perturbations, taken from the dimension's continuous weather levels
-     * rather than the raining/thundering flags — see {@link WindModel#weatherScale}. Global to the
-     * dimension, so this costs two float reads and no chunk, heightmap or biome lookup.
+     * Rain/storm scaling for the perturbations, taken from the dimension's continuous weather
+     * levels — two float reads, no chunk/heightmap/biome lookup.
      */
     private static double weatherMultiplier(final ServerLevel level) {
         return WindModel.weatherScale(VentusConfig.rainMultiplier(), VentusConfig.thunderMultiplier(),
@@ -189,25 +158,10 @@ public final class WindField {
     private static final Map<ResourceLocation, Double> WARMTH = new HashMap<>();
 
     /**
-     * The height of the <b>ground</b> at a column, or {@link Double#NaN} when its chunk is not loaded.
-     * Like the rest of the field, this never forces a chunk load.
-     *
-     * <p>Uses {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES}, not {@code OCEAN_FLOOR}, because
-     * these terms model what the air is being forced over, and to the air the sea surface and the
-     * leaves simply are not there:
-     *
-     * <ul>
-     *     <li><b>Water.</b> {@code OCEAN_FLOOR} ignores liquids, so over a shallow sea with a sloping
-     *     seabed it returns the seabed and would invent orographic lift under a boat. This map counts
-     *     liquids, so the sea surface is the ground and open water is flat.</li>
-     *     <li><b>Leaves.</b> {@code OCEAN_FLOOR} counts leaves as solid, so the edge of a forest —
-     *     canopies ten blocks tall ending in a step — reads as a cliff and would generate lift where
-     *     there is no hill. This map excludes leaves.</li>
-     * </ul>
-     *
-     * <p>The height profile in {@link #fadeAt} deliberately keeps {@code OCEAN_FLOOR}: there the
-     * question is how sheltered a point is, and a boat on the sea or a plane above a canopy really
-     * are exposed to the wind.
+     * The height of the <b>ground</b> at a column, or {@link Double#NaN} when its chunk is not
+     * loaded; never forces a chunk load. Uses {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES}, so
+     * water and leaves are not ground (a sloping seabed or a forest edge would read as a cliff);
+     * {@link #fadeAt} uses {@code OCEAN_FLOOR} instead, where shelter is the question.
      */
     private static double surfaceAt(final ServerLevel level, final int x, final int z) {
         return columnAt(level, x, z, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
@@ -223,13 +177,9 @@ public final class WindField {
     }
 
     /**
-     * How far past dawn and short of dusk the sun is, in {@code [0, 1]}: 0 through the night, 1 at
-     * midday. Dawn and dusk each get {@link #TWILIGHT_TICKS} ticks to ramp, so thermals breathe in
-     * and out with the day instead of switching on at sunrise.
-     *
-     * <p>Uses the level's own day clock, so {@code /time set} produces a ramp rather than a jump.
-     * Multiplied by {@link #skyAt}, so a point under a roof, or in a dimension with no sky light,
-     * gets no thermal whatever the clock says.
+     * How far past dawn and short of dusk the sun is, in {@code [0, 1]}: 0 at night, 1 at midday,
+     * ramping over {@link #TWILIGHT_TICKS} ticks. Times {@link #skyAt}, so a roof or a skyless
+     * dimension gets no thermal.
      */
     private static double daylightAt(final ServerLevel level, final Vector3dc worldPos) {
         final long dayTime = Math.floorMod(level.getDayTime(), 24000L);
@@ -243,15 +193,10 @@ public final class WindField {
     }
 
     /**
-     * How much of the sun actually reaches a point, in {@code [0, 1]}. Zero in a dimension without
-     * sky light (the Nether never gets thermals), and ramping in over
-     * {@link VentusConfig#thermalSkyClearance()} blocks of clearance above
-     * {@link Heightmap.Types#WORLD_SURFACE}, so flying into a hangar eases the thermal off instead
-     * of cutting it. WORLD_SURFACE counts leaves, so a forest canopy shades the air under it exactly
-     * as a roof does.
-     *
-     * <p>Requires the column's chunk to be loaded; an unknown column gets no sun rather than loading
-     * it.
+     * How much of the sun reaches a point, in {@code [0, 1]}: zero without sky light, ramping in
+     * over {@link VentusConfig#thermalSkyClearance()} blocks above the terrain
+     * ({@link Heightmap.Types#WORLD_SURFACE}, so a canopy shades like a roof). Unknown columns get
+     * no sun rather than loading the chunk.
      */
     private static double skyAt(final ServerLevel level, final Vector3dc worldPos) {
         if (!level.dimensionType().hasSkyLight()) {
@@ -275,12 +220,8 @@ public final class WindField {
 
     /**
      * How hot the biome at a point is, in {@code [0, 1]}: 0 at or below
-     * {@link VentusConfig#thermalColdTemperature()} and 1 at
-     * {@link VentusConfig#thermalHotTemperature()}. Deserts and badlands sit at 1, savanna part way
-     * up and temperate biomes at 0, which is roughly how real convection behaves.
-     *
-     * <p>Cached by biome id, because the answer only changes when the biome does. Requires the chunk
-     * to be loaded (a biome lookup would otherwise load it) and yields 0 when it is not.
+     * {@link VentusConfig#thermalColdTemperature()}, 1 at {@link VentusConfig#thermalHotTemperature()}.
+     * Cached by biome id; an unloaded chunk yields 0.
      */
     private static double warmthAt(final ServerLevel level, final BlockPos pos) {
         if (level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) == null) {
@@ -316,15 +257,10 @@ public final class WindField {
 
     /**
      * The rise-over-run of the ground along the <b>base wind</b> direction, or {@link Double#NaN}
-     * when either probe column is not loaded. Positive means the wind is about to climb a windward
-     * face, negative that it is pouring off one.
-     *
-     * <p>Deliberately measured along the prevailing base wind rather than the local (base + field)
-     * wind: a mountain's lee side is a fixed place, and it should not flip because the field deflected
-     * the wind a few degrees this tick. The probing and the 45&deg; clamp live in
-     * {@link WindModel#slopeAlongWind}; what this method adds is the decision of <em>which</em>
-     * surface is measured — {@link #surfaceAt}, so open water and forest edges are flat ground rather
-     * than phantom cliffs.
+     * when a probe column is not loaded: positive = windward, negative = lee. Measured along the
+     * base wind so the sign does not flip when the field deflects it; the probes use
+     * {@link #surfaceAt}, so open water and forest edges are flat ground. The probing and the
+     * 45&deg; clamp live in {@link WindModel#slopeAlongWind}.
      */
     private static double slopeAlongWind(final ServerLevel level, final Vector3dc worldPos,
             final double dirX, final double dirZ) {
@@ -333,22 +269,9 @@ public final class WindField {
     }
 
     /**
-     * The stage-4 vertical air speed at a point: thermals plus orographic lift, kept apart so the
-     * diagnostics command can report each one.
-     *
-     * <p>Both are returned before the height profile and the entry ramp, because the caller scales the
-     * whole wind vector by those afterwards — and both <em>should</em> be weaker near the ground.
-     *
-     * @param noise           the per-dimension noise set
-     * @param level           the level, for the sun, the rain and the biome
-     * @param worldPos        the sample point
-     * @param horizontalSpeed the local wind's speed <em>along the base direction</em>, signed — see
-     *                        {@link WindModel#alongBaseWind}; a plain (unsigned) speed would lift the
-     *                        air on a hill it has reversed away from
-     * @param slope           the terrain slope along the base wind, or {@code NaN} if unknown
-     * @param decay           {@link WindModel#heightDecay} at this altitude, applied to the orographic
-     *                        term only — a thermal exists because it rose, a ridge only lifts beside itself
-     * @param out             the terms to fill (reused)
+     * Fills {@code out} with the vertical air speed at a point — thermals plus orographic lift,
+     * kept apart so the diagnostics command can report each one. Computed before the height profile
+     * and the entry ramp, since the caller scales the whole wind vector by those afterwards.
      */
     private static void verticalAt(final NoiseSet noise, final ServerLevel level, final Vector3dc worldPos,
             final double horizontalSpeed, final double slope, final double decay, final Vertical out) {
@@ -372,7 +295,7 @@ public final class WindField {
         }
     }
 
-    /** The two stage-4 vertical terms at one sample point. */
+    /** The two vertical terms (thermal + orographic) at one sample point. */
     private static final class Vertical {
         double thermal;
         double orographic;
@@ -386,35 +309,18 @@ public final class WindField {
     private static final Vertical VERTICAL = new Vertical();
 
     /**
-     * @return {@code true} when the global kill switch ({@code -Dventus.disableWind}) is on, in
-     * which case the field is zero everywhere and no work needs doing
+     * @return {@code true} when {@code -Dventus.disableWind} is on, in which case the field is
+     * zero everywhere and no work needs doing
      */
     public static boolean isCalm() {
         return !ENABLED;
     }
 
     /**
-     * Samples the wind for one sub-level, writing it into the carrier's {@link WindCarrier#ventus$wind()}
-     * and updating the carrier's cached fade and first-sample time.
-     *
-     * @param level    the level the sub-level is in
-     * @param worldPos the sub-level's sample point, in world space
-     * @param carrier  the sub-level's wind state
-     */
-    /**
-     * Applies the jet stream and the wind shear to a dimension's base wind, in place.
-     *
-     * <p>Both are keyed on absolute altitude rather than height above ground: a jet is a band of fast
-     * air and shear is a gradient through the atmosphere, and neither is a property of the terrain
-     * below. They run on the base wind before the budget is sized from it, so the clamp keeps scaling
-     * with the air that actually blows at this height instead of clipping a sea-level figure. The
-     * shear also turns the direction, which means the terrain slope downstream is measured along the
-     * wind that really crosses the ridge here rather than the one configured at the ground.
-     *
-     * @param dest     the base wind, horizontal (modified in place)
-     * @param altitude absolute world Y (blocks)
-     * @param record   the breakdown to note the individual multipliers on, or {@code null} on the
-     *                 hot path where nothing is displayed
+     * Applies the jet stream and the wind shear to a dimension's base wind, in place. Both key on
+     * absolute altitude (a jet is a band of fast air, shear a gradient through the atmosphere), and
+     * this runs before the budget is sized, so the clamp tracks the air that actually blows here.
+     * {@code record} notes the individual multipliers, or is {@code null} on the hot path.
      */
     private static void applyAltitude(final Vector3d dest, final double altitude, final Breakdown record) {
         final double maxAltitude = VentusConfig.shearMaxAltitude();
@@ -437,6 +343,10 @@ public final class WindField {
         }
     }
 
+    /**
+     * Samples the wind for one sub-level, writing it into the carrier's
+     * {@link WindCarrier#ventus$wind()} and updating the carrier's cached fade and first-sample time.
+     */
     public static void sample(final ServerLevel level, final Vector3dc worldPos, final WindCarrier carrier) {
         final Vector3d dest = carrier.ventus$wind();
 
@@ -458,35 +368,26 @@ public final class WindField {
             return;
         }
 
-        // How turbulent the air is comes from the dimension's base wind, before the altitude profile.
-        // A jet stream is laminar — fast, not rough — so sizing the gusts against the profiled wind
-        // would have made the core several times stormier than sea level, which is backwards.
+        // Gusts are sized from the base wind before the altitude profile: a jet is fast, not rough.
         final double referenceMag = dest.length();
         applyAltitude(dest, worldPos.y(), null);
 
         final double fade = fadeAt(level, worldPos, carrier.ventus$fade());
         carrier.ventus$setFade(fade);
 
-        // After the jet and the shear, what is in dest is the wind as it actually blows at this
-        // altitude: its direction is what the terrain slope is measured along, and its magnitude is
-        // the starting point for the clamp's budget.
+        // After the jet and shear this is the wind here: slope runs along it, its magnitude is the budget.
         final double baseMag = dest.length();
         final double windScale = VentusConfig.windScale();
         final double entry = entryRamp(level, carrier);
 
-        // The budget is the base wind as it actually is *here* — after the height profile, the
-        // fade-in and windScale — not the dimension's sea-level figure. A jet stream that raises the
-        // base at altitude then raises the budget with it, so the cap keeps acting on the
-        // perturbations rather than clipping a number that belongs to a different altitude.
+        // Budget = the prevailing wind *here* (profile, fade-in, windScale), so a jet raises the cap with it.
         final double scale = fade * entry * windScale;
         final double prevailing = baseMag * scale;
 
         final NoiseSet noise = noiseSet(level);
         final WindModel.Settings settings = VentusConfig.windModelSettings();
 
-        // Both terrain-locked terms die out with altitude: a ridge lifts the air beside it, not an
-        // aircraft crossing the range far above the crest. Thermals are not decayed, because a
-        // thermal exists precisely because it rose.
+        // Terrain-locked terms decay with altitude; thermals do not (a thermal exists because it rose).
         final double terrain = surfaceAt(level, Mth.floor(worldPos.x()), Mth.floor(worldPos.z()));
         final double decay = Double.isNaN(terrain)
                 ? 1.0 : WindModel.heightDecay(worldPos.y() - terrain, VentusConfig.slopeHeightFalloff());
@@ -503,9 +404,7 @@ public final class WindField {
                 WindModel.alongBaseWind(dest.x(), dest.z(), MODEL_RESULT.total.x, MODEL_RESULT.total.z),
                 slope, decay, VERTICAL);
 
-        // Ease the two terrain-derived terms towards their target: both are read from integer
-        // terrain heights, so without this they would step as the sampled columns change. Gusts are
-        // deliberately left alone, because they are meant to be quick.
+        // Ease the terrain-derived terms (integer heightmaps would step them); gusts stay unsmoothed.
         final double vertical = WindModel.approach(carrier.ventus$vertical(), VERTICAL.total(),
                 VentusConfig.verticalSmoothSeconds(), 1.0 / 20.0);
         carrier.ventus$setVertical(vertical);
@@ -517,17 +416,9 @@ public final class WindField {
     }
 
     /**
-     * The last thing before a wind is stored: the budget clamp, in terms of the prevailing wind here.
-     *
-     * <p>Every term is bounded on its own, but they now <em>sum</em> — base, pressure field, gusts
-     * (roughened by rain and by the lee side), the thermal and the orographic term. With the defaults
-     * the horizontal already caps at 3 &times; 3 = 9 m/s and the two vertical terms reach at most
-     * 2.5 + 9 &times; 0.5 = 7 m/s, so the whole vector tops out near 11.4 m/s before this clamp. This
-     * is the safety net for that sum, and the guard against a NaN ever reaching a rigid body.
-     *
-     * @param wind       the finished wind, already scaled
-     * @param prevailing the prevailing wind here: the base wind after the height profile, the
-     *                   fade-in and {@code windScale}
+     * Caps the finished wind at {@code maxWindMultiplier} times the prevailing wind here (the base
+     * after the height profile, fade-in and {@code windScale}), and guards against a NaN ever
+     * reaching a rigid body.
      */
     private static void clampToBudget(final Vector3d wind, final double prevailing) {
         WindModel.clampToBudget(wind, prevailing, VentusConfig.maxWindMultiplier());
@@ -541,8 +432,7 @@ public final class WindField {
     }
 
     /**
-     * Fills {@code dest} with the separated components of the steady-state wind at a point: the base
-     * wind, the pressure-field perturbation, the height factor and the capped total. Unlike
+     * Fills {@code dest} with the separated components of the steady-state wind at a point. Unlike
      * {@link #sample} it touches no sub-level state, applies no temporal fade-in, and assumes full
      * wind when the terrain is unknown.
      */
@@ -562,9 +452,7 @@ public final class WindField {
         dest.shear = 1.0;
         dest.shearDegrees = 0.0;
 
-        // Both heightmaps of the sample column, read before anything can return early: /windfield
-        // info reports them verbatim, so the ground the terrain terms use and the floor the height
-        // profile uses can be compared directly instead of being worked back out of other numbers.
+        // Read both heightmaps before any early return: /windfield info prints them verbatim.
         final int columnX = Mth.floor(worldPos.x());
         final int columnZ = Mth.floor(worldPos.z());
         dest.groundHeight = surfaceAt(level, columnX, columnZ);
@@ -590,9 +478,7 @@ public final class WindField {
         final double fade = fadeAt(level, worldPos, 1.0);
         dest.heightFactor = fade;
 
-        // After the jet and the shear, dest.base holds the wind as it actually blows here; its
-        // magnitude, once the height profile and windScale are applied below, is the budget the
-        // clamp works from.
+        // dest.base is the wind here; once scaled below, its magnitude is the clamp's budget.
         final double baseMag = dest.base.length();
         final double windScale = VentusConfig.windScale();
 
@@ -646,28 +532,19 @@ public final class WindField {
         public double slope;
         /** Extra gust amplitude on the lee side, as a fraction of the base gust (0 = none). */
         public double leeBoost;
-        /** The thermal updraft at this point, before the height profile (stage 4). */
+        /** The thermal updraft at this point, before the height profile. */
         public double thermal;
-        /** The orographic up- or downdraft at this point, before the height profile (stage 4). */
+        /** The orographic up- or downdraft at this point, before the height profile. */
         public double orographic;
         /** The jet stream's multiplier on the base wind at this altitude (1 = outside the band). */
         public double jet;
         /** The wind shear's speed multiplier at this altitude (1 = no shear here). */
         public double shear;
-        /** How far the wind's heading has turned at this altitude, in degrees (stage 5). */
+        /** How far the wind's heading has turned at this altitude, in degrees. */
         public double shearDegrees;
-        /**
-         * The ground height under the sample point, or {@code NaN} when its chunk is not loaded.
-         * {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES} — what {@link #slope} is measured from.
-         */
+        /** Ground height, or {@code NaN} if unloaded: MOTION_BLOCKING_NO_LEAVES — what {@link #slope} uses. */
         public double groundHeight;
-        /**
-         * The same column read as {@link Heightmap.Types#OCEAN_FLOOR}, or {@code NaN} when its chunk
-         * is not loaded: leaves counted, liquids not. What {@link #heightFactor} ramps from.
-         *
-         * <p>The two differ by exactly the canopy where there is one, and agree where there is not.
-         * {@code /windfield info} prints both so that gap is visible instead of inferred.
-         */
+        /** Same column as OCEAN_FLOOR (leaves in, liquids out): what {@link #heightFactor} ramps from. */
         public double floorHeight;
         public boolean capped;
 
@@ -679,11 +556,8 @@ public final class WindField {
 
     /**
      * The height profile factor at a point: {@link VentusConfig#surfaceCalm()} at or below the
-     * terrain, ramping smoothly to 1 at {@link VentusConfig#fadeHeight()} blocks above it, and 0 if
-     * the sample point is submerged.
-     *
-     * @param unknownChunkFade the factor to return when the terrain is not loaded (the caller's last
-     *                         known factor, or 0 / 1 depending on the caller)
+     * terrain, ramping to 1 at {@link VentusConfig#fadeHeight()} blocks above it, 0 if submerged.
+     * {@code unknownChunkFade} is what an unloaded terrain returns (the caller's last factor).
      */
     private static double fadeAt(final ServerLevel level, final Vector3dc worldPos, final double unknownChunkFade) {
         final int x = Mth.floor(worldPos.x());
@@ -701,9 +575,7 @@ public final class WindField {
             return 0.0;
         }
 
-        // OCEAN_FLOOR on purpose: the question here is how sheltered the point is, so water does not
-        // count and a boat on the sea sits above its reference. The terrain-locked terms use
-        // MOTION_BLOCKING_NO_LEAVES instead — see surfaceAt.
+        // OCEAN_FLOOR here (shelter — water doesn't count); terrain terms use MOTION_BLOCKING_NO_LEAVES.
         final double terrain = chunk.getHeight(Heightmap.Types.OCEAN_FLOOR, x & 15, z & 15);
         final double surfaceCalm = VentusConfig.surfaceCalm();
         return surfaceCalm + (1.0 - surfaceCalm)
@@ -712,8 +584,8 @@ public final class WindField {
 
     /**
      * The temporal fade-in factor: 0 on a sub-level's first sample, ramping to 1 over
-     * {@link #ENTRY_RAMP_SECONDS} seconds of game time. Times the sub-level's first sample on the
-     * first call.
+     * {@link #ENTRY_RAMP_SECONDS} seconds of game time. The first call records the sample time and
+     * returns 0.
      */
     private static double entryRamp(final ServerLevel level, final WindCarrier carrier) {
         final long now = level.getGameTime();
@@ -724,7 +596,7 @@ public final class WindField {
             return 0.0;
         }
 
-        // A backwards clock (world reload) restarts the ramp, which is what we want.
+        // A backwards clock (world reload) restarts the ramp.
         return smoothstep((now - first) / (ENTRY_RAMP_SECONDS * 20.0));
     }
 

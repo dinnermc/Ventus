@@ -645,8 +645,9 @@ class WindModelTest {
 
     @Test
     void fieldIsContinuousWithTheLeewardGustsOn() {
-        // Continuity must survive the stage-4 path too: the leeward roughening is a multiplier on
-        // the gusts, so if it were stepped or discontinuous the roughest side of a ridge would jump.
+        // Continuity must hold for the vertical (thermal + orographic) path too: the leeward
+        // roughening is a multiplier on the gusts, so if it were stepped the roughest side of a
+        // ridge would jump.
         final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
         final Vector3d prev = new Vector3d();
