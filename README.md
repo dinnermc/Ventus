@@ -1,7 +1,20 @@
-# Ventus
+<div align="center">
+  <img src="src/main/resources/assets/ventus/icon.png" alt="Ventus Icon" width="180" />
 
-Wind field mod for **Minecraft 1.21.1 / NeoForge 21.1.259** that makes Sable sub-levels — sails,
-planes, boats, balloons — feel the air move.
+  <h1>Ventus</h1>
+
+  <p>
+    <a href="https://modrinth.com/mod/ventus-mod">
+      <img src="https://img.shields.io/modrinth/dt/ventus-mod?logo=modrinth&label=Downloads&style=flat&color=242629&labelColor=5CA424&logoColor=fff" alt="Modrinth Downloads" />
+    </a>
+    <img src="https://img.shields.io/badge/Minecraft-1.21.1-brightgreen?logo=minecraft" alt="Minecraft Version" />
+    <img src="https://img.shields.io/badge/Loader-NeoForge-orange" alt="NeoForge" />
+    <img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License" />
+  </p>
+
+  <p>Wind field mod for <b>Minecraft 1.21.1 / NeoForge</b> that makes Sable sub-levels — sails,
+planes, boats, balloons — feel the air move.</p>
+</div>
 
 Ventus hooks into [Sable](https://github.com/ryanhcode/sable)'s sub-level physics and feeds its
 lift and drag the velocity **relative to the air** instead of relative to the world, plus an
