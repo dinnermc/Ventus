@@ -15,11 +15,7 @@ public final class WindHudFormat {
     /** Horizontal wind at or below this (m/s) is still air: there is no direction to point at. */
     public static final float CALM_EPSILON = 0.05f;
 
-    /**
-     * Vertical wind must pass this (m/s) before the climb marker appears. Kept low: a real
-     * variometer reads tenths, and with the defaults a ridge under a 3 m/s wind only lifts about
-     * 0.45 m/s, so anything above a tenth is worth showing.
-     */
+    /** Vertical wind (m/s) before the climb marker appears. */
     public static final float CLIMB_EPSILON = 0.1f;
 
     /** Whether the horizontal wind is light enough to call it still air. */
@@ -32,22 +28,14 @@ public final class WindHudFormat {
         return Math.atan2(Math.sin(radians), Math.cos(radians));
     }
 
-    /**
-     * Steps the arrow's angle towards the one the server sent, with the same exponential
-     * {@link WindModel#approach} step the field smoothing uses. Takes the short way round the dial,
-     * and {@code deltaSeconds} rather than a per-frame factor, so 30 and 144 fps settle in the same
-     * real time.
-     */
+    /** Steps the arrow's angle towards the one the server sent, the short way round the dial. */
     public static double approachAngle(final double current, final double target,
             final double deltaSeconds, final double timeConstant) {
         final double difference = normalizeAngle(target - current);
         return WindModel.approach(current, current + difference, timeConstant, deltaSeconds);
     }
 
-    /**
-     * The climb marker: empty while the vertical component stays within {@link #CLIMB_EPSILON},
-     * otherwise {@code ↑1.3} or {@code ↓1.3}.
-     */
+    /** The climb marker, e.g. {@code ↑1.3}; empty while the vertical stays within {@link #CLIMB_EPSILON}. */
     public static String climbLabel(final double verticalSpeed) {
         if (Math.abs(verticalSpeed) <= CLIMB_EPSILON) {
             return "";
@@ -56,21 +44,14 @@ public final class WindHudFormat {
                 Math.abs(verticalSpeed));
     }
 
-    /**
-     * The text beside the arrow: the horizontal speed in m/s and, when it is worth showing, the
-     * climb marker, e.g. {@code 3.2 m/s ↑1.3}. Still air is just {@code 0.0 m/s}.
-     */
+    /** The text beside the arrow: speed in m/s plus the climb marker when worth showing. */
     public static String line(final double horizontalSpeed, final double verticalSpeed) {
         final String climb = climbLabel(verticalSpeed);
         final String figure = String.format(Locale.ROOT, "%.1f m/s", horizontalSpeed);
         return climb.isEmpty() ? figure : figure + " " + climb;
     }
 
-    /**
-     * Colour of the line and the arrow, by physical speed in m/s: grey under 1, cyan under 4,
-     * amber under 8, orange under 16, red beyond. Still air therefore reads grey without a special
-     * case.
-     */
+    /** Colour of the line and the arrow by speed (m/s): grey, cyan, amber, orange, red. */
     public static int speedColor(final double speedMetresPerSecond) {
         if (speedMetresPerSecond < 1.0) {
             return 0xFF8C96A6;

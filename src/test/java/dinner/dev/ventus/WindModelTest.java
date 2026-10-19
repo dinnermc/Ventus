@@ -414,9 +414,8 @@ class WindModelTest {
 
     @Test
     void fieldIsContinuousThroughTheWindCalmPointInAStorm() {
-        // Where the perturbation nearly cancels the base, the gust direction is poorly defined
-        // and could swing with it. Drive strength up until cancellation is unavoidable, find
-        // the calm point, and walk a line through it.
+        // Where the perturbation nearly cancels the base the gust direction is poorly defined;
+        // drive strength up until cancellation is unavoidable and walk a line through it.
         final WindModel.Settings s = settings(1500, 1200, 8.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
 
@@ -561,7 +560,7 @@ class WindModelTest {
     @Test
     void theFieldOccasionallyReversesThePrevailingWind() {
         // fieldStrength = 1.0 means the perturbation is the same size as the base wind, so it
-        // must overtake the flow at some points. The figure is quoted in the README; measure it.
+        // must overtake the flow at some points; a storm only makes that more frequent.
         final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
 
