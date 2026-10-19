@@ -26,43 +26,21 @@ import org.joml.Vector3d;
 import java.util.Locale;
 
 /**
- * The {@code /windfield} command.
- * <p>
- * {@code /windfield info} reports, for the Sable sub-level the executing player is standing on
- * (or riding): the wind sampled for that sub-level, the sub-level's material velocity at the
- * player's position, and the air-relative velocity that Sable's lift &amp; drag actually sees. It
- * also reports whether the wind is non-zero ({@code windActive}) plus the dimension's drag
- * coefficient and the sub-level's mass, so a stalled test can be diagnosed from the output alone.
- * <p>
- * {@code /windfield info <pos>} does the same for the sub-level containing {@code pos}. This variant
- * needs no player, so it is usable from a dedicated server console or RCON.
- * <p>
- * {@code /windfield stats [radius] [step]} instead sweeps a horizontal grid around the player and
- * reports how often the wind points against the configured base wind, plus how often the perturbation
- * outweighs it. That is the measurement behind the storm-reversal claim in the README, and it can only
- * be made in the world, on the real seed and the real rain/thunder levels.
- * <p>
- * When there is no sub-level at the sampled position the command still reports the field itself —
- * base, field, gust, height factor, slope, thermal and orographic — because those are properties of
- * the position. That makes it usable to walk or fly around sampling biomes and slopes without being
- * aboard anything. Both column heights are reported with them ({@code groundHeight} with leaves
- * excluded, {@code floorHeight} with leaves included), so a forest edge can be told apart from a
- * hill without working the canopy height back out of the other numbers.
- * <p>
- * {@code /windfield set} forces this dimension's <em>base</em> wind to a vector for the running
- * session, and {@code /windfield storm} sets its weather. Neither is written to the config, so both
- * die with the server; together they let an admin (or a video shoot) dial in a known wind without
- * editing a file or waiting for the weather to turn.
+ * The {@code /windfield} command. {@code info} reports the wind sampled for the sub-level the
+ * player is standing on or riding, or at a given position; without a sub-level it reports the
+ * field at the position instead, so it works on foot too. {@code stats} sweeps a grid around a
+ * point and reports how often the wind points against the base wind. {@code set} forces this
+ * dimension's base wind for the running session, {@code storm} its weather; neither is written
+ * to the config file.
  */
 public final class WindFieldCommand {
     private WindFieldCommand() {
     }
 
     /**
-     * Hard ceiling on the samples one {@code stats} sweep may take. Every sample runs the full field
-     * (several noise evaluations plus config reads) on the <b>server thread</b>, so an unbounded
-     * radius/step pair would lock the game rather than just take a while: the argument ranges allow
-     * up to 4 million points. Rejected before the loop starts, with the count in the message.
+     * Hard ceiling on the samples one {@code stats} sweep may take. Every sample runs the full
+     * field on the server thread, so an unbounded radius/step pair would lock the game; rejected
+     * before the loop starts, with the count in the message.
      */
     private static final long MAX_SAMPLES = 65_000L;
 
@@ -193,17 +171,9 @@ public final class WindFieldCommand {
     }
 
     /**
-     * {@code /windfield set <wind>} — forces this dimension's <em>base</em> wind to the vector.
-     * <p>
-     * The vector argument is {@code vec3(false)}, not the default {@code vec3()}: the default snaps
-     * whole numbers to the centre of that block (+0.5 on X and Z), which is right for a position and
-     * wrong for a velocity — {@code 10 0 0} has to mean ten metres a second east, not 10.5.
-     * <p>
-     * Only the configured {@code [dimensions]} entry is replaced: the pressure field, the gusts, the
-     * weather scaling and the whole altitude profile are still applied on top, so an override reads
-     * like a real wind rather than a fixed vector bolted into the physics. Everything that samples
-     * the base wind goes through {@link WindField#baseWind}, so the command, the HUD and the
-     * sub-levels cannot disagree about it.
+     * {@code /windfield set <wind>} — forces this dimension's base wind to the vector for this
+     * session. The argument is {@code vec3(false)}, so whole numbers are not snapped to block
+     * centres: {@code 10 0 0} means ten metres a second east. Everything else still applies on top.
      */
     private static int setWind(final CommandSourceStack source, final Vec3 wind) {
         final ServerLevel level = source.getLevel();
@@ -238,12 +208,9 @@ public final class WindFieldCommand {
     }
 
     /**
-     * {@code /windfield storm [clear | rain]} — sets the executing dimension's weather.
-     * <p>
-     * Goes through vanilla's own {@code setWeatherParameters}, with the durations held open so the
-     * weather stays where it was put until something else changes it. The rain and thunder
-     * <em>levels</em> then ease in over about five seconds, exactly as they do for real weather,
-     * which is what the field reads: the wind builds instead of stepping.
+     * {@code /windfield storm [clear | rain]} — sets the executing dimension's weather through
+     * vanilla's own {@code setWeatherParameters}, held open. The rain and thunder levels then ease
+     * in over about five seconds, the way real weather does, so the wind builds instead of stepping.
      */
     private static int storm(final CommandSourceStack source, final Weather weather) {
         final ServerLevel level = source.getLevel();
@@ -274,27 +241,11 @@ public final class WindFieldCommand {
     }
 
     /**
-     * {@code /windfield stats [radius] [step]} — sweeps a horizontal grid of samples around the
-     * executing player and reports how often the wind ends up pointing against the dimension's
-     * configured base wind.
-     * <p>
-     * This is the measurement behind the claim that a storm can reverse the heading. It has to run in
-     * the world: the grid is sampled with the real per-dimension {@code SimplexNoise} at the real world
-     * seed and the current rain/thunder levels, none of which the unit tests can see (Minecraft is not
-     * on the test classpath — see the note in {@code build.gradle}).
-     * <p>
-     * <b>Window size matters.</b> The pressure noise is correlated over {@code fieldScale} (1500 blocks),
-     * so a window much smaller than that samples a single patch of noise and reports that patch's
-     * heading rather than the distribution — a first attempt with a 784-block window read 85% reversed
-     * where the true figure is 50%. The default 4096-block window covers several cells; for a steadier
-     * figure run it at a few far-apart centres and average, since {@code breakdown} touches no chunk and
-     * an arbitrarily distant centre costs nothing but arithmetic.
-     * <p>
-     * {@code breakdown} never forces a chunk load, so points over unloaded terrain report
-     * {@code slope = NaN} and assume full wind. Heading does not depend on terrain, so those samples
-     * are still valid; they are counted separately so the figure can be read with that in mind.
+     * {@code /windfield stats [radius] [step]} — sweeps a horizontal grid around a point and
+     * reports how often the wind points against the dimension's base wind. Must run in the world:
+     * the grid uses the real seed and weather levels. The default 4096-block window covers several
+     * noise cells; a smaller one samples a single patch and skews the figure.
      */
-    /** Resolves the centre from the executing player, for the no-position form of the command. */
     private static int statsAtPlayer(final CommandSourceStack source, final int radius, final int step) {
         final Vec3 pos;
         try {

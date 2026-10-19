@@ -8,18 +8,13 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.neoforged.neoforge.client.event.RenderGuiEvent;
 
 /**
- * The wind HUD: one line of text pinned to a screen corner — a small needle that swings to the
- * direction the wind is blowing relative to the player, the speed in m/s, and the climb marker once
- * the vertical component is worth showing.
- *
- * <p>Only ever shows data that arrived from the server via {@link WindSyncState}; with no Ventus on
- * the server, or before the first packet, the HUD stays hidden. It also steps aside for the F3
- * debug screen, which owns the same corner.
- *
- * <p>The server sends the wind five times a second, so the needle keeps its own angle and eases
- * towards the received one every frame ({@link WindHudFormat#approachAngle}); the text is rebuilt
- * only when the figures it is made of change. A still player therefore costs one string comparison
- * and a handful of fills.
+ * The wind HUD: one line of text pinned to a screen corner — a needle that swings to the wind
+ * direction relative to the player, the speed in m/s, and a climb marker once the vertical
+ * component is worth showing. Only shows data that arrived from the server via
+ * {@link WindSyncState}; with no Ventus on the server, or before the first packet, the HUD stays
+ * hidden, and it steps aside for the F3 debug screen. The needle eases towards each new
+ * direction ({@link WindHudFormat#approachAngle}); the text is rebuilt only when the figures
+ * change.
  */
 public final class WindHud {
     private WindHud() {

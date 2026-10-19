@@ -24,28 +24,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.Locale;
 
 /**
- * Feeds Sable's lift &amp; drag the velocity of a sub-level <em>relative to the air</em> instead
- * of relative to the world, at the three places in {@code ServerSubLevel.prePhysicsTick} that turn
- * a body velocity into a force: the two {@code BlockSubLevelLiftProvider.sable$contributeLiftAndDrag}
- * calls (ships, sails, anything with lift providers) and the
- * {@code FloatingBlockController.physicsTick} call (balloons and other floating-block sub-levels).
- * <p>
- * Why this call site: the providers compute their aerodynamic forces from the velocity they are
- * handed, so removing the wind makes a flying sub-level accelerate until it matches the air speed.
- * The argument is read-only ({@code Vector3dc}) and never written back to the body, so we only
- * affect the forces derived from it.
- * <p>
- * The wind is sampled once per game tick by {@code WindSampler} and stored in this mixin's
- * {@code @Unique} fields; the hooks here only read them. This mixin implements {@link WindCarrier}
- * so the sampler can reach that state on any {@code ServerSubLevel}.
- * <p>
- * Sable's universal drag is applied inside the native physics pipeline and cannot be reached from
- * Java, so {@link #ventus$windDrag} instead injects the compensating {@code mass * d * w * dt}
- * impulse that makes that drag act on the air-relative velocity. See the method for details.
- * <p>
- * {@code BlockSubLevelLiftProvider} is an interface and Mixin cannot inject into interface
- * methods without {@code @Overwrite} (forbidden, a third-party patch already owns that method),
- * hence the hook on the concrete caller.
+ * Feeds Sable's lift and drag the velocity of a sub-level relative to the air instead of the
+ * world, at the three places in {@code ServerSubLevel.prePhysicsTick} that turn a body velocity
+ * into a force. The wind is sampled once per game tick by {@code WindSampler} and stored in the
+ * {@code @Unique} fields here; this mixin implements {@link WindCarrier} so the sampler can
+ * reach that state on any {@code ServerSubLevel}.
  */
 @Mixin(targets = "dev.ryanhcode.sable.sublevel.ServerSubLevel", remap = false)
 public abstract class ServerSubLevelWindMixin implements WindCarrier {
@@ -151,7 +134,7 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     }
 
     /**
-     * The main sub-level lift &amp; drag pass (one call per lift provider).
+     * The main sub-level lift and drag pass (one call per lift provider).
      */
     @ModifyArg(
             method = PRE_PHYSICS_TICK,
@@ -169,7 +152,7 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     }
 
     /**
-     * The kinematic-contraption lift &amp; drag pass (one call per contraption lift provider).
+     * The kinematic-contraption lift and drag pass (one call per contraption lift provider).
      */
     @ModifyArg(
             method = PRE_PHYSICS_TICK,
@@ -187,32 +170,11 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     }
 
     /**
-     * The floating-block pass: balloons, rafts and any sub-level made only of floating blocks.
-     * <p>
-     * These have no {@link BlockSubLevelLiftProvider}s, so they never reach either call above.
-     * They are driven by {@code FloatingBlockController.physicsTick}, whose
-     * {@code applyFriction} opposes the body velocity <em>in world space</em>. Left as is, that
-     * friction is a brake pulling the body toward {@code v = 0}, and it cancels the
-     * {@code mass * d * w * dt} coupling at HEAD, which pulls toward {@code v = w}. The two
-     * neutralise each other and the balloon never drifts.
-     * <p>
-     * Handing the controller the air-relative velocity turns the very same friction into a sail:
-     * it damps {@code v - w}, which is zero exactly when the sub-level moves with the air, and
-     * which pushes the body downwind when it is standing still. The material's friction
-     * coefficients become the size of the sail, so a big light balloon catches far more wind than
-     * a small dense one, without any new tuning.
-     * <p>
-     * Only the linear component is rewritten; angular velocity stays in world space, matching what
-     * the two lift-provider passes do. {@code linearImpulse} and {@code angularImpulse} are passed
-     * straight through untouched, so the controller still writes its lift and friction into them.
-     * <p>
-     * {@code @WrapOperation} rather than {@code @ModifyArg}: two {@code double} parameters precede
-     * the velocity here, so the argument index differs from the lift-provider target and is easy to
-     * get wrong, and a wrap binds the call's parameters by type and cannot be miscounted. It is also
-     * the polite injector on a shared call site — a {@code @Redirect} claims
-     * {@code physicsTick} exclusively, so the first other mod to wrap or redirect it makes one of
-     * the two mixins fail and the game refuses to boot. Wraps compose: several mods can wrap the
-     * same call and everyone's change survives.
+     * The floating-block pass: balloons, rafts, anything made only of floating blocks. These
+     * have no lift providers, so they never reach either call above. Handing the controller the
+     * air-relative velocity turns its world-space friction into a sail: it damps {@code v - w},
+     * which is zero exactly when the sub-level moves with the air. Wrapped rather than redirected
+     * so other mods can wrap the same call site too.
      */
     @WrapOperation(
             method = PRE_PHYSICS_TICK,
@@ -232,27 +194,10 @@ public abstract class ServerSubLevelWindMixin implements WindCarrier {
     }
 
     /**
-     * Emulates Sable's universal drag acting on the velocity <em>relative to the air</em> instead of
-     * the world velocity, by adding the missing {@code mass * d * w * dt} impulse once per physics
-     * tick.
-     * <p>
-     * Sable applies its universal linear damping inside the native Rapier scene (initialised with
-     * {@code universalDrag}), where it damps the body's world velocity ({@code v *= 1 / (1 + dt * d)}).
-     * Wind has to damp the velocity relative to the moving air, i.e. the net change should be
-     * {@code -d * (v - w) * dt}. Injecting {@code +m * d * w * dt} here shifts the damping equilibrium
-     * from {@code v = 0} to {@code v = w}, so every ticking sub-level drifts with the wind.
-     * <p>
-     * The drag coefficient is measured: Sable's universal decay is exponential with {@code d = 0.09}
-     * (five points, {@code t = 1..8s}, error &lt; 0.3%). Applied at the centre of mass, so it produces
-     * no torque (linear only, matching the native linear damping).
-     * <p>
-     * Injected at {@code HEAD}: the body of {@code prePhysicsTick} is skipped for
-     * sub-levels without lift providers, contraptions, reaction wheels or floating-block ticking
-     * (a plain block), but those bodies are still simulated and dragged natively. Applying the
-     * impulse before that guard makes the wind drag global, exactly like the native universal drag.
-     * <p>
-     * The per-tick wind is already zero where the field is calm, near the ground, or during the
-     * fade-in, so this is a no-op for those sub-levels.
+     * Adds the {@code mass * drag * wind * dt} impulse per tick that makes Sable's native
+     * universal drag act on the air-relative velocity instead of the world velocity, shifting its
+     * equilibrium from {@code v = 0} to {@code v = w}. Injected at HEAD so sub-levels whose tick
+     * body is skipped still get it; a no-op while the wind is calm.
      */
     @Inject(method = PRE_PHYSICS_TICK, at = @At("HEAD"))
     private void ventus$windDrag(final SubLevelPhysicsSystem physicsSystem, final RigidBodyHandle handle,

@@ -14,31 +14,12 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import org.joml.Vector3d;
 
 /**
- * Sends each player the wind so the client HUD has something to draw, as the wind that player
- * actually feels:
- *
- * <ul>
- *     <li>standing in the world — {@link WindField#sampleAt} at the eye position, the same field
- *     the physics hooks use, evaluated at the player rather than at a sub-level (there is no height
- *     fade-in or temporal ramp on this path — the HUD shows the steady state);</li>
- *     <li>standing in, riding or tracking a Sable sub-level — the vector that sub-level was
- *     actually given this tick, {@link WindCarrier#ventus$wind()}. Same lookup
- *     {@code /windfield info} uses, so the two always agree, and the reading carries the ramp-in
- *     and the smoothing the vehicle really is subject to.</li>
- * </ul>
- *
- * <p>Aboard a vehicle the eye position is the wrong place to sample: it is a point in the world
- * around the plane, not the air the plane is in, and the client cannot tell the two apart. The
- * instrument therefore has to read the vehicle, which already has the answer. While aboard,
- * {@code hudWind} printed by {@code /windfield info} should now match that sub-level's `wind`.
- *
- * <p>The client cannot evaluate this field itself: the noise is seeded from the world seed, which only
- * the server has. So the value is pushed, and it is pushed sparingly — a player who is standing still
- * barely changes their wind, so the packet is held until it has moved by more than
- * {@link #MIN_DELTA} m/s, and never faster than {@link #SEND_INTERVAL_TICKS} ticks (5 Hz) either way.
- *
- * <p>Runs on the server thread from {@code ServerTickEvent.Post}. A player without the mod simply drops
- * the payload on arrival, because it is registered as optional.
+ * Sends each player the wind for the client HUD: the vector of the sub-level they are standing
+ * on, riding or tracking ({@link WindCarrier#ventus$wind()}), or the field at their eye
+ * position when they are in the world. Pushed at most every {@link #SEND_INTERVAL_TICKS} ticks
+ * and only when the wind moved by more than {@link #MIN_DELTA}, because the client cannot
+ * evaluate the field itself — the noise is seeded from the world seed. A player without the mod
+ * drops the payload; the registrar is optional.
  */
 public final class WindHudSync {
     private WindHudSync() {

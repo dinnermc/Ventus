@@ -94,11 +94,8 @@ class WindModelTest {
         assertEquals(dry.field.x * STORM, storm.field.x, 1e-9);
         assertEquals(dry.field.z * STORM, storm.field.z, 1e-9);
 
-        // The gust ratio below only holds where the calm-point fade is exactly 1 in *both* runs. That
-        // is true here by the choice of sample point, not by construction - so state it. If someone
-        // moves this point somewhere the storm field cancels the base, one fade starts shrinking and
-        // the ratio would fail with a bare number instead of an explanation.
-        // Threshold = WindModel.GUST_CALM_FADE * reference.
+        // The gust ratio below only holds where the calm-point fade is exactly 1 in both runs;
+        // assert that first, so the failure message is not a bare number.
         for (final WindModel.Result r : new WindModel.Result[] { dry, storm }) {
             final double localLen = Math.hypot(BASE.x + r.field.x, BASE.z + r.field.z);
             assertTrue(localLen >= 0.5 * BASE.length(),
@@ -107,9 +104,8 @@ class WindModelTest {
                             + " - pick somewhere with ordinary wind");
         }
 
-        // The gust amplitude scales with the weather too. Its *direction* is taken from the local
-        // wind, which the scaled field has already turned, so only the magnitude is comparable — and
-        // because the along/lateral pair sits in an orthonormal frame, |gust| is amp * sqrt(a^2+b^2).
+        // Amplitude scales with weather; direction comes from the already-scaled local wind,
+        // so only the magnitude is comparable.
         assertEquals(dry.gust.length() * STORM, storm.gust.length(), 1e-9);
 
         // Whatever is left after removing field and gust must still be the plain base wind.
@@ -194,15 +190,11 @@ class WindModelTest {
         assertEquals(3.0, withTheWind, 1e-12);
         assertEquals(-3.0, against, 1e-12);
 
-        // Air running as base does climbs that face: 3 m/s over ground rising 0.2 per block lifts
-        // the air at 0.6 m/s (speed x slope x strength), a number worked out here rather than read
-        // back out of the call under test.
+        // 3 m/s over ground rising 0.2 per block lifts the air at 0.6 m/s.
         assertEquals(0.6, WindModel.orographic(withTheWind, slope, 1.0), 1e-12);
 
-        // Same hill, same speed — the perturbations have only turned the air around, so it is now
-        // pouring off that face: -3 x 0.2 x 1 = -0.6, equal and opposite. An unsigned speed (a
-        // hypotenuse) would have reported lift in both columns, because the sign would come from
-        // the terrain alone.
+        // Same hill, air turned around: it pours off that face instead. An unsigned speed would
+        // report lift in both directions.
         assertEquals(-0.6, WindModel.orographic(against, slope, 1.0), 1e-12);
 
         // Where the two cancel the component is zero, and it crosses zero rather than jumping.
@@ -256,10 +248,8 @@ class WindModelTest {
 
     @Test
     void gustsKeepTheirFullAmplitudeWhereTheWindIsNotCalm() {
-        // The calm-point fade has one job: kill the gust where the local wind has cancelled. It must
-        // leave ordinary wind alone, or gustAmplitude stops meaning what the config says. So the
-        // expected gust here is rebuilt by hand from the same noise calls the model makes, with the
-        // fade at exactly 1 — and the test would fail if the fade ever ate into normal wind.
+        // Rebuild the expected gust by hand with the fade at exactly 1, so this fails if the
+        // calm-point fade ever eats into ordinary wind.
         final WindModel.Settings s = new WindModel.Settings(1500, 1200, 1.0, 50.0, 150, 120, 0.35, 0.3, 0.0);
         final WindModel.Result out = new WindModel.Result();
 
@@ -424,15 +414,9 @@ class WindModelTest {
 
     @Test
     void fieldIsContinuousThroughTheWindCalmPointInAStorm() {
-        // The gust is oriented along the local (base + field) wind and its amplitude does not shrink
-        // as that vector shortens (WindModel: dirLen is only used to normalise, amp comes from
-        // reference). So the risk is where the perturbation nearly cancels the base: there the
-        // direction is poorly defined and the gust could swing with it.
-        //
-        // The question is not whether the default noise happens to cancel — it does not, a scan of
-        // 160k storm points bottoms out at |local| = 2.48 against |base| = 3.0 — but what the code
-        // does when it does. So the strength is driven up until cancellation is unavoidable, the
-        // calm point is located, and a quarter-block line is walked through it.
+        // Where the perturbation nearly cancels the base, the gust direction is poorly defined
+        // and could swing with it. Drive strength up until cancellation is unavoidable, find
+        // the calm point, and walk a line through it.
         final WindModel.Settings s = settings(1500, 1200, 8.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
 
@@ -484,12 +468,9 @@ class WindModelTest {
     }
 
     /**
-     * A pressure that grows quadratically, so its gradient - and the field - varies linearly.
-     * <p>
-     * Note the argument order: {@link WindModel.Noise3} is declared {@code at(x, y, z)} but the model
-     * samples it as {@code at(nx, nz, nt)}, so the world-z axis arrives in the <em>second</em>
-     * parameter and time in the third. Ramping the third one ramps time and leaves the gradient in
-     * z at zero, which produces a field of exactly nothing.
+     * A pressure that grows quadratically, so its gradient (and the field) varies linearly. The
+     * model samples {@code at(x, z, time)}: world-z arrives in the second parameter, so ramping
+     * the third ramps time, not the gradient.
      */
     private static double rampPressure(final double x, final double nz, final double time) {
         return 0.5 * nz * nz;
@@ -536,10 +517,8 @@ class WindModelTest {
 
     @Test
     void theGustDoesNotJumpWhereTheLocalWindCancels() {
-        // The default test noise never cancels the base - a 160k-point storm scan bottoms out at
-        // |local| = 2.48 against |base| = 3.0 - so this one forces the crossing by hand. A ramp in z
-        // gives a field that varies linearly with z, so there is exactly one z where the local wind
-        // is zero, and the walk passes straight through it.
+        // The default noise never cancels the base, so force the crossing with a ramp in z:
+        // a field linear in z has exactly one zero crossing, and the walk passes through it.
         final WindModel.Settings s = settings(1500, 1200, 1.0, 50.0);
         final WindModel.Result out = new WindModel.Result();
         final double calmZ = rampCalmZ(s, STORM);
@@ -581,10 +560,8 @@ class WindModelTest {
 
     @Test
     void theFieldOccasionallyReversesThePrevailingWind() {
-        // fieldStrength = 1.0 means the typical deflection is the same size as the base wind, so the
-        // perturbation is bound to overtake the prevailing flow at some points and point against it
-        // there. The storm multiplier makes that more frequent; it does not make it possible. The
-        // number is quoted in the README, so measure it rather than describe it.
+        // fieldStrength = 1.0 means the perturbation is the same size as the base wind, so it
+        // must overtake the flow at some points. The figure is quoted in the README; measure it.
         final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
 
@@ -593,7 +570,7 @@ class WindModelTest {
         int stormReversed = 0;
 
         for (int i = 0; i < samples; i++) {
-            // A lattice wide enough to cover many field scales, with time advancing, so the samples
+            // Lattice wide enough to cover many field scales, time advancing, so the samples
             // sweep the noise instead of freezing one slice of it.
             final double x = (i % 141) * 37.0;
             final double z = (i / 141) * 53.0;
@@ -623,8 +600,8 @@ class WindModelTest {
 
     @Test
     void fieldIsContinuousOverTime() {
-        // The same property as the spatial walk, on the other axis: hold the position and advance
-        // game time a second at a time. A step here would read as a gust arriving instantly.
+        // Same property on the time axis: hold position, advance time. A step here would read
+        // as a gust arriving instantly.
         final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
         final Vector3d prev = new Vector3d();
@@ -645,9 +622,8 @@ class WindModelTest {
 
     @Test
     void fieldIsContinuousWithTheLeewardGustsOn() {
-        // Continuity must hold for the vertical (thermal + orographic) path too: the leeward
-        // roughening is a multiplier on the gusts, so if it were stepped the roughest side of a
-        // ridge would jump.
+        // The vertical path must stay continuous too: leeward roughening multiplies the gusts,
+        // so a stepped multiplier would jump on a ridge's roughest side.
         final WindModel.Settings s = settings(1500, 1200, 1.0, 3.0);
         final WindModel.Result out = new WindModel.Result();
         final Vector3d prev = new Vector3d();
@@ -684,9 +660,8 @@ class WindModelTest {
 
     @Test
     void flatWaterOverASlopingSeabedIsNotARidge() {
-        // The air flows over the sea surface, not the seabed. Model a shallow sea whose floor climbs
-        // across the probe distance while the water surface stays level. Reading the seabed invents
-        // orographic lift under a boat; reading the surface correctly gives none.
+        // A shallow sea whose floor climbs while the surface stays level: the air flows over
+        // the surface, so there is no orographic lift under a boat.
         final double probe = 16.0;
         final WindModel.ColumnHeight seabed = (x, z) -> 40.0 + (x / (2.0 * probe)) * 15.0;
         final WindModel.ColumnHeight seaSurface = (x, z) -> 60.0;
@@ -790,9 +765,8 @@ class WindModelTest {
 
     @Test
     void theJetIsContinuousThroughTheBand() {
-        // Climbing into the jet is the case that matters: an aircraft crossing the edge must feel a
-        // gradient, not a step. The steepest smoothstep gets is 1.5, so across a one-block step the
-        // multiplier can move by at most strength * 1.5 / thickness — anything larger is a jump.
+        // Crossing the jet edge must feel a gradient, not a step. The steepest smoothstep gets
+        // is 1.5, so across a one-block step the multiplier can move by at most that ratio.
         final double limit = 3.0 * 1.5 / 60.0;
 
         double previous = WindModel.jetFactor(100.0, 220.0, 60.0, 3.0);
@@ -832,9 +806,8 @@ class WindModelTest {
 
     @Test
     void theShearStaysContinuousBoundedAndFiniteAcrossTheWholeAtmosphere() {
-        // Sable's atmosphere runs to about 3500 blocks and the world floor is Y -64. Uncapped, shear
-        // reached an 8x wind turned 450 degrees at the top, and the clamp bounds magnitude but never
-        // heading — so this walks the entire range holding all three properties at once.
+        // Walk the whole range (Y -64 to 3500): the clamp bounds magnitude but never heading,
+        // so an uncapped shear used to spin the wind several full turns.
         final double perHundred = 0.25;
         final double degreesPerHundred = 15.0;
         final double maxAltitude = 300.0;
@@ -869,11 +842,8 @@ class WindModelTest {
 
     @Test
     void aJetMakesTheWindFasterButNotRougher() {
-        // A jet stream is laminar: fast, not rough. Both runs size their perturbations against the
-        // same reference — the dimension's base wind before the altitude profile — so the field and
-        // the gusts come out identical even though the wind itself is three times stronger up there.
-        // Sizing them against the profiled wind would have made the core several times stormier than
-        // sea level, which is backwards for a river of fast air.
+        // A jet is fast, not rough: both runs size their perturbations against the same base
+        // wind, so the field and gusts come out identical even three times stronger up there.
         final WindModel.Settings settings = settings(1500.0, 1200.0, 1.0, 3.0);
         final Vector3d calm = new Vector3d(3.0, 0.0, 0.0);
         final Vector3d jetted = new Vector3d(9.0, 0.0, 0.0);

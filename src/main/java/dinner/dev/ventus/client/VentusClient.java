@@ -12,10 +12,9 @@ import net.neoforged.neoforge.common.NeoForge;
 import org.lwjgl.glfw.GLFW;
 
 /**
- * Everything Ventus does on the physical client: the keybind and the HUD.
- *
- * <p>Loaded only from {@code Ventus}'s constructor behind a {@code Dist.CLIENT} guard, so a dedicated
- * server never touches it (the class references {@code Minecraft} types throughout).
+ * Everything Ventus does on the physical client: the keybind and the HUD. Loaded only from
+ * {@code Ventus}'s constructor behind a {@code Dist.CLIENT} guard, so a dedicated server never
+ * touches it.
  */
 public final class VentusClient {
     private VentusClient() {

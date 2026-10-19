@@ -20,13 +20,11 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The wind field for one sub-level sample, in <b>blocks per second</b> (Sable's physics unit,
- * {@code 1 block/s = 1 m/s}; a light breeze is 2-6, a storm is 20+). Built from the configured
- * per-dimension base wind, a height profile ({@link #fadeAt}), a temporal fade-in
- * ({@link #entryRamp}) and {@link VentusConfig#windScale()}, with pressure field, gusts, weather,
- * thermals and orographic lift on top; a submerged sample point yields zero wind.
- * <p>
- * {@code -Dventus.wind=x,y,z} overrides the whole field, {@code -Dventus.disableWind=true} forces calm.
+ * The wind field for one sub-level sample, in blocks per second (Sable's physics unit,
+ * {@code 1 block/s = 1 m/s}). Configured per-dimension base wind, a pressure field, gusts,
+ * weather, thermals and orographic lift, scaled by the height profile and the entry ramp; a
+ * submerged sample point yields zero wind. {@code -Dventus.wind=x,y,z} overrides the whole
+ * field, {@code -Dventus.disableWind=true} forces calm.
  */
 public final class WindField {
     private WindField() {
@@ -158,10 +156,9 @@ public final class WindField {
     private static final Map<ResourceLocation, Double> WARMTH = new HashMap<>();
 
     /**
-     * The height of the <b>ground</b> at a column, or {@link Double#NaN} when its chunk is not
-     * loaded; never forces a chunk load. Uses {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES}, so
-     * water and leaves are not ground (a sloping seabed or a forest edge would read as a cliff);
-     * {@link #fadeAt} uses {@code OCEAN_FLOOR} instead, where shelter is the question.
+     * The height of the ground at a column, or {@link Double#NaN} when its chunk is not loaded;
+     * never forces a chunk load. Uses {@link Heightmap.Types#MOTION_BLOCKING_NO_LEAVES}, so water
+     * and leaves are not ground.
      */
     private static double surfaceAt(final ServerLevel level, final int x, final int z) {
         return columnAt(level, x, z, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
@@ -256,10 +253,8 @@ public final class WindField {
     }
 
     /**
-     * The rise-over-run of the ground along the <b>base wind</b> direction, or {@link Double#NaN}
-     * when a probe column is not loaded: positive = windward, negative = lee. Measured along the
-     * base wind so the sign does not flip when the field deflects it; the probes use
-     * {@link #surfaceAt}, so open water and forest edges are flat ground. The probing and the
+     * The rise-over-run of the ground along the base wind direction, or {@link Double#NaN} when
+     * a probe column is not loaded: positive = windward, negative = lee. The probing and the
      * 45&deg; clamp live in {@link WindModel#slopeAlongWind}.
      */
     private static double slopeAlongWind(final ServerLevel level, final Vector3dc worldPos,

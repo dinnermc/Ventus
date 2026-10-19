@@ -7,12 +7,10 @@ import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
 
 /**
- * The wind at one player's eye position, sent from the server to the client every tick so the client
- * HUD can show it. The field itself is server-owned (it is a server config plus server-level terrain
- * queries), so the client only ever displays a copy.
- *
- * <p>Registered as an <em>optional</em> payload (see {@link VentusNetwork}), so a client without
- * Ventus simply ignores it.
+ * The wind at one player's eye position, sent from the server to the client for the HUD. The
+ * field is server-owned (config plus terrain queries), so the client only ever displays a copy.
+ * Registered as an optional payload (see {@link VentusNetwork}), so a client without Ventus
+ * simply ignores it.
  */
 public record WindSyncPayload(float x, float y, float z) implements CustomPacketPayload {
 

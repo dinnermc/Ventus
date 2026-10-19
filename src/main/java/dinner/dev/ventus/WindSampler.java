@@ -9,17 +9,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 
 /**
  * Samples the wind for every Sable sub-level once per game tick, storing it in the sub-level's
- * {@link WindCarrier}.
- * <p>
- * Sampling once per tick (instead of per physics sub-step) keeps the height field lookup out of the
- * hot path and gives a stable wind for the whole tick. The physics hooks in
- * {@code ServerSubLevelWindMixin} then just read the stored vector.
- * <p>
- * <b>Threading.</b> Both this listener ({@link ServerTickEvent.Pre}) and the hooks run on the server
- * thread: Sable ticks its physics from {@code ServerLevel.tick} via {@code SubLevelContainer.tick},
- * which is the server thread, and Sable has no physics worker threads. So the mutable vector needs
- * no synchronisation. {@code -Pventus.debugWind=true} logs this thread once, and the hook logs its
- * own once, so the two can be compared at runtime.
+ * {@link WindCarrier}; the physics hooks then just read the stored vector. Runs on the server
+ * thread, like the hooks, so the mutable vector needs no synchronisation.
  */
 public final class WindSampler {
     private WindSampler() {

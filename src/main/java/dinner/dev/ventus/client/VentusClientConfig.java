@@ -3,12 +3,9 @@ package dinner.dev.ventus.client;
 import net.neoforged.neoforge.common.ModConfigSpec;
 
 /**
- * The client config (config/ventus-client.toml): where the wind line sits. Nothing else, so the
- * file stays readable by players.
- *
- * <p>Registered only from {@code Ventus}'s constructor behind a {@code Dist.CLIENT} guard, so a
- * dedicated server never builds it. The accessor falls back to its default while the file has not
- * loaded yet, because {@link ModConfigSpec.ConfigValue#get()} refuses to answer before that.
+ * The client config (config/ventus-client.toml): where the wind line sits. Registered only from
+ * {@code Ventus}'s constructor behind a {@code Dist.CLIENT} guard, so a dedicated server never
+ * builds it. The accessor falls back to its default before the file loads.
  */
 public final class VentusClientConfig {
     private VentusClientConfig() {

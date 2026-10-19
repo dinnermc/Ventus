@@ -1,12 +1,8 @@
 package dinner.dev.ventus.network;
 
 /**
- * The last wind vector the server sent for the local player, kept as plain fields.
- *
- * <p>This class has no Minecraft <em>client</em> types so it can be referenced
- * from the network handler, which NeoForge also instantiates on a dedicated server. In practice it is
- * only ever written by the client-side {@code playToClient} handler and only ever read by the client
- * HUD.
+ * The last wind vector the server sent for the local player, kept as plain fields. Has no
+ * Minecraft client types, so the network handler can reference it on a dedicated server too.
  */
 public final class WindSyncState {
     private WindSyncState() {

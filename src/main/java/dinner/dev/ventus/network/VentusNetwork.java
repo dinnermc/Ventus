@@ -4,15 +4,9 @@ import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
 /**
- * Network payloads shared by both sides.
- *
- * <p>The registrar is marked {@link PayloadRegistrar#optional() optional} so a client that does not
- * have Ventus installed simply drops the wind packets instead of refusing to join, and a server that
- * does not have Ventus never sends anything (the HUD then stays hidden for lack of data).
- *
- * <p>This class is safe to load on a dedicated server: it references no client class. The handler
- * only ever runs on the client, but {@link WindSyncState} — the class it touches — has no client
- * dependencies either.
+ * Registers the wind payload as {@link PayloadRegistrar#optional() optional}, so a client
+ * without Ventus drops it instead of refusing to join. References no client class; safe on a
+ * dedicated server.
  */
 public final class VentusNetwork {
     private VentusNetwork() {

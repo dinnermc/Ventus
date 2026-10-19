@@ -5,10 +5,8 @@ import java.util.Locale;
 
 /**
  * Everything about the wind HUD that can be decided without Minecraft: the angle smoothing, the
- * figures and the single line that ends up on screen.
- *
- * <p>Kept free of client classes, so the formatting and the smoothing can be unit tested
- * without a running game. {@link WindHud} owns the drawing and caches whatever this class produces.
+ * figures and the single line that ends up on screen. Kept free of client classes so the
+ * formatting and the smoothing can be unit tested; {@link WindHud} owns the drawing.
  */
 public final class WindHudFormat {
     private WindHudFormat() {
